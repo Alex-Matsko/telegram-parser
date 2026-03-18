@@ -1,0 +1,119 @@
+import { NavLink, Outlet } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { getStats } from '../api/client';
+import {
+  BarChart3,
+  History,
+  Radio,
+  AlertCircle,
+  Package,
+  Activity,
+  Clock,
+  MessageSquareWarning,
+} from 'lucide-react';
+
+function StatsBar() {
+  const { data: stats } = useQuery({
+    queryKey: ['stats'],
+    queryFn: getStats,
+    refetchInterval: 30000,
+  });
+
+  if (!stats) return null;
+
+  const formatTime = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  return (
+    <div className="bg-surface-800 border-b border-border px-4 py-2 flex items-center gap-6 text-xs overflow-x-auto">
+      <div className="flex items-center gap-1.5 text-gray-400">
+        <Package className="w-3.5 h-3.5" />
+        <span>Товаров:</span>
+        <span className="text-gray-200 font-medium">{stats.total_products}</span>
+      </div>
+      <div className="flex items-center gap-1.5 text-gray-400">
+        <Radio className="w-3.5 h-3.5" />
+        <span>Источников:</span>
+        <span className="text-gray-200 font-medium">{stats.active_sources}/{stats.total_sources}</span>
+      </div>
+      <div className="flex items-center gap-1.5 text-gray-400">
+        <Activity className="w-3.5 h-3.5" />
+        <span>Предложений:</span>
+        <span className="text-gray-200 font-medium">{stats.total_offers}</span>
+      </div>
+      <div className="flex items-center gap-1.5 text-gray-400">
+        <Clock className="w-3.5 h-3.5" />
+        <span>Обновлено:</span>
+        <span className="text-gray-200 font-medium">{formatTime(stats.last_update)}</span>
+      </div>
+      {(stats.pending_reviews > 0 || stats.failed_parses > 0) && (
+        <div className="flex items-center gap-1.5 text-warning">
+          <MessageSquareWarning className="w-3.5 h-3.5" />
+          <span>На проверку:</span>
+          <span className="font-medium">{stats.pending_reviews + stats.failed_parses}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const navItems = [
+  { to: '/', label: 'Сводный прайс', icon: BarChart3 },
+  { to: '/sources', label: 'Источники', icon: Radio },
+  { to: '/unresolved', label: 'Неразобранные', icon: AlertCircle },
+];
+
+export default function Layout() {
+  return (
+    <div className="min-h-screen flex flex-col bg-surface-900">
+      {/* Top Nav */}
+      <header className="bg-surface-800 border-b border-border">
+        <div className="px-4 flex items-center h-12 gap-6">
+          {/* Logo */}
+          <NavLink to="/" className="flex items-center gap-2 shrink-0">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-label="TG Price Monitor Logo">
+              <rect x="2" y="2" width="20" height="20" rx="4" stroke="currentColor" strokeWidth="1.5" className="text-accent" />
+              <path d="M7 14l3-6 4 4 3-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-positive" />
+              <circle cx="7" cy="14" r="1.5" fill="currentColor" className="text-positive" />
+              <circle cx="10" cy="8" r="1.5" fill="currentColor" className="text-accent" />
+              <circle cx="14" cy="12" r="1.5" fill="currentColor" className="text-accent" />
+              <circle cx="17" cy="7" r="1.5" fill="currentColor" className="text-positive" />
+            </svg>
+            <span className="text-sm font-semibold text-gray-100 tracking-tight">TG Price Monitor</span>
+          </NavLink>
+
+          {/* Nav Links */}
+          <nav className="flex items-center gap-1">
+            {navItems.map(({ to, label, icon: Icon }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={to === '/'}
+                className={({ isActive }) =>
+                  `flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors ${
+                    isActive
+                      ? 'bg-accent/10 text-accent font-medium'
+                      : 'text-gray-400 hover:text-gray-200 hover:bg-surface-700'
+                  }`
+                }
+              >
+                <Icon className="w-4 h-4" />
+                {label}
+              </NavLink>
+            ))}
+          </nav>
+        </div>
+      </header>
+
+      {/* Stats Bar */}
+      <StatsBar />
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-hidden">
+        <Outlet />
+      </main>
+    </div>
+  );
+}
