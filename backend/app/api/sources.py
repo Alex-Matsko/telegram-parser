@@ -1,121 +1,124 @@
-"""Source management API endpoints."""
+"""Sources API — manage Telegram data sources."""
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_session
+from app.database import get_db
 from app.models.source import Source
-from app.models.supplier import Supplier
-from app.schemas.source import (
-    SourceCreate,
-    SourceLogEntry,
-    SourceResponse,
-    SourceUpdate,
-)
 
-router = APIRouter(prefix="/sources", tags=["Sources"])
+router = APIRouter(prefix="/sources", tags=["sources"])
+
+
+class SourceCreate(BaseModel):
+    source_name: str
+    type: str  # channel / group / bot
+    telegram_id: str
+    supplier_id: Optional[int] = None
+    is_active: bool = True
+    poll_interval: int = 900
+    parsing_strategy: str = "auto"
+    bot_scenario_id: Optional[int] = None
+
+
+class SourceUpdate(BaseModel):
+    source_name: Optional[str] = None
+    type: Optional[str] = None
+    telegram_id: Optional[str] = None
+    supplier_id: Optional[int] = None
+    is_active: Optional[bool] = None
+    poll_interval: Optional[int] = None
+    parsing_strategy: Optional[str] = None
+    bot_scenario_id: Optional[int] = None
+
+
+class SourceResponse(BaseModel):
+    id: int
+    source_name: str
+    type: str
+    telegram_id: str
+    supplier_id: Optional[int]
+    is_active: bool
+    poll_interval: int
+    parsing_strategy: str
+    bot_scenario_id: Optional[int]
+    last_message_id: Optional[int]
+    last_read_at: Optional[str]
+    error_count: Optional[int]
+    last_error: Optional[str]
+
+    class Config:
+        from_attributes = True
 
 
 @router.get("", response_model=list[SourceResponse])
-async def list_sources(
-    session: AsyncSession = Depends(get_session),
-) -> list[SourceResponse]:
-    """List all sources with status."""
-    result = await session.execute(
-        select(Source).order_by(Source.created_at.desc())
-    )
-    sources = result.scalars().all()
-    responses = []
-    for s in sources:
-        resp = SourceResponse.model_validate(s)
-        if s.supplier:
-            resp.supplier_name = s.supplier.display_name
-        responses.append(resp)
-    return responses
+async def list_sources(db: AsyncSession = Depends(get_db)):
+    """List all configured Telegram sources."""
+    result = await db.execute(select(Source).order_by(Source.id))
+    return result.scalars().all()
+
+
+@router.get("/{source_id}", response_model=SourceResponse)
+async def get_source(source_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Source).where(Source.id == source_id))
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    return source
 
 
 @router.post("", response_model=SourceResponse, status_code=201)
-async def create_source(
-    data: SourceCreate,
-    session: AsyncSession = Depends(get_session),
-) -> SourceResponse:
-    """Add a new source."""
-    source = Source(
-        type=data.type,
-        telegram_id=data.telegram_id,
-        source_name=data.source_name,
-        supplier_id=data.supplier_id,
-        is_active=data.is_active,
-        poll_interval_minutes=data.poll_interval_minutes,
-        parsing_strategy=data.parsing_strategy,
-        bot_scenario_id=data.bot_scenario_id,
-    )
-    session.add(source)
-    await session.flush()
-    await session.refresh(source)
-    return SourceResponse.model_validate(source)
+async def create_source(data: SourceCreate, db: AsyncSession = Depends(get_db)):
+    """Create a new Telegram source."""
+    source = Source(**data.model_dump())
+    db.add(source)
+    await db.commit()
+    await db.refresh(source)
+    return source
 
 
 @router.put("/{source_id}", response_model=SourceResponse)
 async def update_source(
-    source_id: int,
-    data: SourceUpdate,
-    session: AsyncSession = Depends(get_session),
-) -> SourceResponse:
-    """Update an existing source."""
-    result = await session.execute(
-        select(Source).where(Source.id == source_id)
-    )
+    source_id: int, data: SourceUpdate, db: AsyncSession = Depends(get_db)
+):
+    """Update a source — including linking a supplier_id."""
+    result = await db.execute(select(Source).where(Source.id == source_id))
     source = result.scalar_one_or_none()
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
 
     update_data = data.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(source, key, value)
+    for field, value in update_data.items():
+        setattr(source, field, value)
 
-    await session.flush()
-    await session.refresh(source)
-    return SourceResponse.model_validate(source)
+    await db.commit()
+    await db.refresh(source)
+    return source
 
 
 @router.delete("/{source_id}", status_code=204)
-async def deactivate_source(
-    source_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> None:
-    """Deactivate a source (soft delete)."""
-    result = await session.execute(
-        select(Source).where(Source.id == source_id)
-    )
+async def delete_source(source_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Source).where(Source.id == source_id))
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    await db.delete(source)
+    await db.commit()
+
+
+@router.post("/{source_id}/trigger", status_code=202)
+async def trigger_collect(source_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Manually trigger collection for a single source.
+    Useful for testing without waiting for the scheduler.
+    """
+    result = await db.execute(select(Source).where(Source.id == source_id))
     source = result.scalar_one_or_none()
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
 
-    source.is_active = False
-    await session.flush()
-
-
-@router.get("/{source_id}/logs", response_model=list[SourceLogEntry])
-async def get_source_logs(
-    source_id: int,
-    session: AsyncSession = Depends(get_session),
-) -> list[SourceLogEntry]:
-    """Get error logs for a source."""
-    result = await session.execute(
-        select(Source).where(Source.id == source_id)
-    )
-    source = result.scalar_one_or_none()
-    if not source:
-        raise HTTPException(status_code=404, detail="Source not found")
-
-    logs = []
-    if source.last_error:
-        logs.append(
-            SourceLogEntry(
-                timestamp=source.updated_at,
-                error=source.last_error,
-                error_count=source.error_count,
-            )
-        )
-    return logs
+    from app.tasks.collect import collect_from_source
+    task = collect_from_source.delay(source_id)
+    return {"task_id": task.id, "source_id": source_id, "status": "queued"}

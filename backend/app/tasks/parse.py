@@ -20,7 +20,13 @@ def _run_async(coro):
         loop.close()
 
 
-@celery_app.task(bind=True, max_retries=2, default_retry_delay=30)
+@celery_app.task(
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    soft_time_limit=300,
+    time_limit=360,
+)
 def parse_pending_messages(self):
     """
     Periodic task: parse all unprocessed raw messages.
@@ -46,7 +52,7 @@ def parse_single_message(message_id: int):
 
 
 async def _parse_pending_messages_async() -> dict:
-    """Parse all pending raw messages."""
+    """Parse all pending raw messages — batch of 100."""
     from sqlalchemy import select
 
     from app.config import settings
@@ -57,7 +63,6 @@ async def _parse_pending_messages_async() -> dict:
     stats = {"processed": 0, "parsed": 0, "failed": 0, "needs_review": 0}
 
     async with get_isolated_session() as session:
-        # Get unprocessed messages (batch of 100)
         result = await session.execute(
             select(RawMessage)
             .where(RawMessage.parse_status == "pending")
@@ -72,15 +77,25 @@ async def _parse_pending_messages_async() -> dict:
 
         logger.info(f"Parsing {len(messages)} pending messages")
 
+        # Preload all unique sources to avoid N+1
+        source_ids = list({msg.source_id for msg in messages})
+        sources_result = await session.execute(
+            select(Source).where(Source.id.in_(source_ids))
+        )
+        sources_map = {s.id: s for s in sources_result.scalars().all()}
+
         for msg in messages:
             try:
-                # Get source info for parsing strategy
-                source_result = await session.execute(
-                    select(Source).where(Source.id == msg.source_id)
-                )
-                source = source_result.scalar_one_or_none()
+                source = sources_map.get(msg.source_id)
                 parsing_strategy = source.parsing_strategy if source else "auto"
                 supplier_id = source.supplier_id if source else None
+
+                if not supplier_id:
+                    logger.warning(
+                        f"Source {msg.source_id} has no supplier_id — "
+                        f"message {msg.id} will be marked needs_review. "
+                        f"Please link a Supplier to this Source in /api/sources."
+                    )
 
                 parse_result = await _process_single_message(
                     session=session,
@@ -157,8 +172,8 @@ async def _process_single_message(
 ) -> str:
     """
     Process a single raw message through the parsing pipeline.
-
-    Returns the final parse status: "parsed", "needs_review", or "failed".
+    Pipeline: regex → LLM fallback → normalize → create offer.
+    Returns: "parsed", "needs_review", or "failed".
     """
     from app.models.offer import Offer
     from app.models.price_history import PriceHistory
@@ -169,17 +184,22 @@ async def _process_single_message(
     text = message.message_text
     offers_created = 0
 
-    # Step 1: Try regex parser (unless strategy is "llm" only)
+    # Step 1: Regex parser
     parsed_offers = []
     if parsing_strategy in ("auto", "regex"):
         parse_result = parse_message(text)
         parsed_offers = parse_result.offers
+        logger.debug(
+            f"Regex parser: {len(parsed_offers)} offers, "
+            f"unparsed lines: {len(parse_result.unparsed_lines)}"
+        )
 
-    # Step 2: If regex gave no results or low confidence, try LLM
+    # Step 2: LLM fallback — if regex gave nothing or low confidence
     if parsing_strategy == "auto" and (
         not parsed_offers
         or all(o.confidence < confidence_threshold for o in parsed_offers)
     ):
+        logger.debug(f"Falling back to LLM for message {message.id}")
         llm_offers = await parse_with_llm(text)
         if llm_offers:
             parsed_offers = llm_offers
@@ -187,7 +207,7 @@ async def _process_single_message(
     if parsing_strategy == "llm":
         parsed_offers = await parse_with_llm(text)
 
-    # Step 3: No offers parsed at all
+    # Step 3: No offers at all
     if not parsed_offers:
         message.parse_status = "failed"
         message.parse_error = "No offers could be extracted from the message"
@@ -199,43 +219,49 @@ async def _process_single_message(
     any_needs_review = False
 
     for parsed_offer in parsed_offers:
+        # No supplier — mark needs_review but don't skip silently
+        if not supplier_id:
+            any_needs_review = True
+            logger.info(
+                f"Offer skipped (no supplier_id on source {message.source_id}): "
+                f"{parsed_offer.model} @ {parsed_offer.price} {parsed_offer.currency}"
+            )
+            continue
+
+        if parsed_offer.price is None or parsed_offer.price <= 0:
+            logger.debug(f"Offer skipped: no valid price ({parsed_offer.price})")
+            any_needs_review = True
+            continue
+
         # Normalize and match to product catalog
         product, match_confidence = await normalize_and_match(parsed_offer, session)
 
         if product is None or match_confidence < confidence_threshold:
+            logger.debug(
+                f"Offer needs review: product={product}, "
+                f"match_confidence={match_confidence:.2f}, "
+                f"threshold={confidence_threshold}"
+            )
             any_needs_review = True
             continue
 
-        if parsed_offer.price is None or parsed_offer.price <= 0:
-            any_needs_review = True
-            continue
-
-        # Determine supplier
-        offer_supplier_id = supplier_id
-        if not offer_supplier_id:
-            # Try to find default supplier
-            any_needs_review = True
-            continue
-
-        # Create or update offer
-        # Mark old offers from same supplier for same product as not current
+        # Mark old offers from same supplier+product as not current
         from sqlalchemy import and_, select
-        existing_offers_result = await session.execute(
+        existing_result = await session.execute(
             select(Offer).where(
                 and_(
                     Offer.product_id == product.id,
-                    Offer.supplier_id == offer_supplier_id,
+                    Offer.supplier_id == supplier_id,
                     Offer.is_current == True,  # noqa: E712
                 )
             )
         )
-        existing_offers = existing_offers_result.scalars().all()
-        for old_offer in existing_offers:
+        for old_offer in existing_result.scalars().all():
             old_offer.is_current = False
 
         # Create new offer
         offer = Offer(
-            supplier_id=offer_supplier_id,
+            supplier_id=supplier_id,
             product_id=product.id,
             raw_message_id=message.id,
             price=Decimal(str(parsed_offer.price)),
@@ -246,10 +272,10 @@ async def _process_single_message(
         session.add(offer)
         await session.flush()
 
-        # Record price history
+        # Record price history (ТЗ 4.7 — store every change)
         history_entry = PriceHistory(
             offer_id=offer.id,
-            supplier_id=offer_supplier_id,
+            supplier_id=supplier_id,
             product_id=product.id,
             price=Decimal(str(parsed_offer.price)),
             currency=parsed_offer.currency,
@@ -258,15 +284,20 @@ async def _process_single_message(
 
         offers_created += 1
         any_success = True
+        logger.info(
+            f"Created offer: {parsed_offer.model} {parsed_offer.memory} "
+            f"@ {parsed_offer.price} {parsed_offer.currency} "
+            f"(supplier={supplier_id}, product={product.id})"
+        )
 
-    # Step 5: Set final status
+    # Step 5: Final status
     if any_success:
         message.parse_status = "parsed"
         message.is_processed = True
         status = "parsed"
     elif any_needs_review:
         message.parse_status = "needs_review"
-        message.parse_error = "Low confidence or missing supplier"
+        message.parse_error = "Low confidence, no supplier, or no valid price"
         message.is_processed = True
         status = "needs_review"
     else:

@@ -46,3 +46,12 @@ async def get_telegram_client():
     finally:
         await client.disconnect()
         logger.info("Telegram client disconnected")
+
+
+async def disconnect_telegram_client():
+    """
+    Stub for graceful shutdown compatibility.
+    Actual cleanup is handled by the context manager above.
+    Called during FastAPI shutdown event.
+    """
+    logger.info("Telegram client cleanup: handled by context manager, no persistent client to disconnect.")

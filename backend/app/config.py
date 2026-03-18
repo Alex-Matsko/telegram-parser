@@ -1,4 +1,9 @@
+import logging
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -31,8 +36,27 @@ class Settings(BaseSettings):
     # App
     secret_key: str = "changeme"
     debug: bool = False
-    parser_confidence_threshold: float = 0.7
+    parser_confidence_threshold: float = 0.5
     skip_unchanged_prices: bool = True
+
+    @field_validator("telegram_api_id")
+    @classmethod
+    def validate_telegram_api_id(cls, v: int) -> int:
+        if v == 0:
+            logger.warning(
+                "TELEGRAM_API_ID is not set — Telegram collection will not work. "
+                "Set it in .env file."
+            )
+        return v
+
+    @field_validator("secret_key")
+    @classmethod
+    def validate_secret_key(cls, v: str) -> str:
+        if v == "changeme":
+            logger.warning(
+                "SECRET_KEY is set to default 'changeme' — change it in production!"
+            )
+        return v
 
     @property
     def database_url(self) -> str:
