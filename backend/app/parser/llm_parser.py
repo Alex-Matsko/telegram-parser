@@ -1,6 +1,8 @@
 """
 LLM-based fallback parser for complex/ambiguous price messages.
 Uses an OpenAI-compatible API to extract structured offer data.
+
+System prompt fully aligned with ТЗ section 18.
 """
 import json
 import logging
@@ -13,29 +15,66 @@ from app.parser.regex_parser import ParsedOffer
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a specialized parser for electronics price messages from Telegram channels.
-Your task is to extract structured product offers from raw text messages.
+# ТЗ section 18: system prompt for LLM parsing module
+SYSTEM_PROMPT = """Ты — модуль нормализации прайсов электроники из Telegram-сообщений.
 
-For each offer found in the message, extract:
-- model: Full product model name (e.g., "iPhone 15 Pro Max", "AirPods Pro 2")
-- line: Product line (e.g., "iPhone", "AirPods", "Apple Watch", "MacBook", "iPad")
-- category: One of: smartphone, headphones, watch, laptop, tablet, desktop
-- brand: Usually "Apple" for Apple products
-- memory: Storage size (e.g., "256GB", "512GB", "1TB")
-- color: Color name in English (e.g., "Natural Titanium", "Black", "Blue")
-- condition: One of: new, used, refurbished
-- sim_type: One of: esim, dual, or null
-- price: Numeric price value (just the number)
-- currency: One of: RUB, USD, EUR
+Твоя задача:
+1. Проанализировать входной текст сообщения.
+2. Выделить товарные позиции.
+3. Для каждой позиции извлечь:
+   - category
+   - brand
+   - model
+   - memory
+   - color
+   - condition
+   - price
+   - currency
+   - availability
+4. Привести данные к нормализованному виду.
+5. Вернуть результат строго в JSON.
+6. Если уверенность низкая, установить "needs_review": true.
+7. Не додумывать данные, если их нет явно или они не следуют надёжно из контекста.
+8. Если в одном сообщении несколько позиций — вернуть массив объектов внутри поля "items".
 
-Respond ONLY with a JSON array of offer objects. If you cannot parse any offers, respond with an empty array [].
-Do not include any explanation or text outside the JSON.
+Правила нормализации:
+- 15 pm, 15 pro max, iphone 15pm — варианты iPhone 15 Pro Max.
+- nat / natural — Natural Titanium, если контекст указывает на Apple Pro-модель.
+- Если валюта не указана явно, пытаться определить по контексту, иначе "currency": "RUB".
+- Числа рядом с моделью не считать ценой, если они похожи на объём памяти (32/64/128/256/512/1024).
+- Если сообщение неоднозначно — не фантазировать, поставить needs_review: true.
+- Строки-заголовки, даты, подписи — игнорировать.
+- Состояние: new / used / refurbished. По умолчанию new.
+- Валюта: RUB / USD / EUR.
+- Память: нормализовать к формату 256GB / 1TB.
+- Цвет: на английском (Black, White, Natural Titanium, Blue Titanium и т.д.).
 
-Example input: "15 Pro Max 256 nat - 915$"
-Example output: [{"model": "iPhone 15 Pro Max", "line": "iPhone", "category": "smartphone", "brand": "Apple", "memory": "256GB", "color": "Natural Titanium", "condition": "new", "sim_type": null, "price": 915, "currency": "USD"}]
+line — продуктовая линейка: iPhone / AirPods / Apple Watch / MacBook / iPad / Mac.
+category — одно из: smartphone / headphones / watch / laptop / tablet / desktop.
 
-Example input: "AirPods Pro 2 USB-C 14500"
-Example output: [{"model": "AirPods Pro 2 USB-C", "line": "AirPods", "category": "headphones", "brand": "Apple", "memory": null, "color": null, "condition": "new", "sim_type": null, "price": 14500, "currency": "RUB"}]
+Пример входа: "15 Pro Max 256 nat - 915$"
+Пример выхода:
+{
+  "items": [
+    {
+      "category": "smartphone",
+      "brand": "Apple",
+      "line": "iPhone",
+      "model": "iPhone 15 Pro Max",
+      "memory": "256GB",
+      "color": "Natural Titanium",
+      "condition": "new",
+      "sim_type": null,
+      "price": 915,
+      "currency": "USD",
+      "availability": "in_stock",
+      "confidence": 0.95,
+      "needs_review": false
+    }
+  ]
+}
+
+Отвечай ТОЛЬКО валидным JSON, без пояснений и текста снаружи.
 """
 
 
@@ -71,13 +110,17 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
 
         data = response.json()
         content = data["choices"][0]["message"]["content"].strip()
-
-        # Extract JSON from response (handle markdown code blocks)
         content = _extract_json(content)
 
-        offers_raw = json.loads(content)
-        if not isinstance(offers_raw, list):
-            logger.warning(f"LLM returned non-list: {type(offers_raw)}")
+        parsed = json.loads(content)
+
+        # Support both {"items": [...]} and bare [...]
+        if isinstance(parsed, dict) and "items" in parsed:
+            offers_raw = parsed["items"]
+        elif isinstance(parsed, list):
+            offers_raw = parsed
+        else:
+            logger.warning(f"LLM returned unexpected structure: {type(parsed)}")
             return []
 
         offers = []
@@ -102,7 +145,6 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
 
 def _extract_json(content: str) -> str:
     """Extract JSON from LLM response, handling markdown code blocks."""
-    # Remove markdown code fences
     if "```json" in content:
         start = content.index("```json") + 7
         end = content.index("```", start)
@@ -115,11 +157,18 @@ def _extract_json(content: str) -> str:
 
 
 def _dict_to_parsed_offer(data: dict) -> Optional[ParsedOffer]:
-    """Convert a dictionary to a ParsedOffer."""
+    """Convert a dictionary from LLM response to a ParsedOffer."""
     try:
         price = data.get("price")
         if price is not None:
             price = float(price)
+
+        confidence = float(data.get("confidence", 0.6))
+        needs_review = data.get("needs_review", False)
+
+        # If LLM itself flagged needs_review, lower confidence
+        if needs_review:
+            confidence = min(confidence, 0.4)
 
         return ParsedOffer(
             model=data.get("model"),
@@ -132,7 +181,7 @@ def _dict_to_parsed_offer(data: dict) -> Optional[ParsedOffer]:
             sim_type=data.get("sim_type"),
             price=price,
             currency=data.get("currency", "RUB"),
-            confidence=0.6,  # LLM results get moderate confidence
+            confidence=confidence,
             raw_line=str(data),
         )
     except Exception as e:
