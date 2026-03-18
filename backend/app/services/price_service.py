@@ -88,10 +88,10 @@ async def get_price_list(
     if updated_after:
         query = query.where(best_offer_sq.c.last_updated >= updated_after)
     if supplier_id is not None:
-        # filter to products that have at least one current offer from this supplier
+        # filter to products that have at least one current offer from this source
         supplier_sq = (
             select(Offer.product_id)
-            .where(and_(Offer.supplier_id == supplier_id, Offer.is_current == True))  # noqa: E712
+            .where(and_(Offer.source_id == supplier_id, Offer.is_current == True))  # noqa: E712
             .subquery()
         )
         query = query.where(ProductCatalog.id.in_(select(supplier_sq)))
@@ -112,7 +112,6 @@ async def get_price_list(
 
     rows = (await session.execute(query)).all()
 
-    # Batch-load all runner-up and 3d-change data to avoid N+1
     product_ids = [r[0].id for r in rows]
     runner_up_map = await _batch_runner_up_prices(session, product_ids)
     price_change_map = await _batch_price_change_3d(session, product_ids)
@@ -122,7 +121,9 @@ async def get_price_list(
     for product, best_price, offer_count, last_updated in rows:
         second_price, third_price = runner_up_map.get(product.id, (None, None))
         price_change_3d, price_change_pct = price_change_map.get(product.id, (None, None))
-        best_supplier_name, best_supplier_id = best_supplier_map.get(product.id, ("Unknown", 0))
+        best_supplier_name, best_supplier_id, second_supplier_name, third_supplier_name = best_supplier_map.get(
+            product.id, ("Unknown", 0, None, None)
+        )
 
         items.append(
             PriceListItem(
@@ -139,7 +140,9 @@ async def get_price_list(
                 best_supplier=best_supplier_name,
                 best_supplier_id=best_supplier_id,
                 second_price=second_price,
+                second_supplier=second_supplier_name,
                 third_price=third_price,
+                third_supplier=third_supplier_name,
                 offer_count=offer_count,
                 price_change_3d=price_change_3d,
                 price_change_3d_pct=price_change_pct,
@@ -167,9 +170,10 @@ async def get_product_detail(
     if not product:
         return None
 
+    # Join Offer -> Source to get source_name as supplier name
     offers_result = await session.execute(
-        select(Offer, Supplier.display_name)
-        .join(Supplier, Offer.supplier_id == Supplier.id)
+        select(Offer, Source.source_name)
+        .join(Source, Offer.source_id == Source.id)
         .where(and_(Offer.product_id == product_id, Offer.is_current == True))  # noqa: E712
         .order_by(Offer.price)
     )
@@ -177,8 +181,8 @@ async def get_product_detail(
     offers = [
         OfferDetail(
             offer_id=offer.id,
-            supplier_id=offer.supplier_id,
-            supplier_name=supplier_name,
+            supplier_id=offer.source_id,
+            supplier_name=source_name,
             price=offer.price,
             currency=offer.currency,
             availability=offer.availability,
@@ -186,7 +190,7 @@ async def get_product_detail(
             is_current=offer.is_current,
             updated_at=offer.updated_at,
         )
-        for offer, supplier_name in offers_result.all()
+        for offer, source_name in offers_result.all()
     ]
 
     return PriceListDetailItem(
@@ -216,23 +220,23 @@ async def get_price_history(
 
     since = datetime.now(timezone.utc) - timedelta(days=days)
     query = (
-        select(PriceHistory, Supplier.display_name)
-        .join(Supplier, PriceHistory.supplier_id == Supplier.id)
+        select(PriceHistory, Source.source_name)
+        .join(Source, PriceHistory.source_id == Source.id)
         .where(and_(PriceHistory.product_id == product_id, PriceHistory.captured_at >= since))
     )
     if supplier_id:
-        query = query.where(PriceHistory.supplier_id == supplier_id)
+        query = query.where(PriceHistory.source_id == supplier_id)
     query = query.order_by(PriceHistory.captured_at)
 
     rows = (await session.execute(query)).all()
     history = [
         PriceHistoryPoint(
             price=ph.price,
-            supplier=supplier_name,
-            supplier_id=ph.supplier_id,
+            supplier=source_name,
+            supplier_id=ph.source_id,
             captured_at=ph.captured_at,
         )
-        for ph, supplier_name in rows
+        for ph, source_name in rows
     ]
 
     return PriceHistoryResponse(
@@ -256,22 +260,22 @@ async def get_price_chart_data(
 
     since = datetime.now(timezone.utc) - timedelta(days=days)
     query = (
-        select(PriceHistory, Supplier.display_name)
-        .join(Supplier, PriceHistory.supplier_id == Supplier.id)
+        select(PriceHistory, Source.source_name)
+        .join(Source, PriceHistory.source_id == Source.id)
         .where(and_(PriceHistory.product_id == product_id, PriceHistory.captured_at >= since))
     )
     if supplier_id:
-        query = query.where(PriceHistory.supplier_id == supplier_id)
-    query = query.order_by(PriceHistory.supplier_id, PriceHistory.captured_at)
+        query = query.where(PriceHistory.source_id == supplier_id)
+    query = query.order_by(PriceHistory.source_id, PriceHistory.captured_at)
 
     rows = (await session.execute(query)).all()
     series_map: dict[int, PriceChartSeries] = {}
-    for ph, supplier_name in rows:
-        if ph.supplier_id not in series_map:
-            series_map[ph.supplier_id] = PriceChartSeries(
-                supplier=supplier_name, supplier_id=ph.supplier_id, data=[]
+    for ph, source_name in rows:
+        if ph.source_id not in series_map:
+            series_map[ph.source_id] = PriceChartSeries(
+                supplier=source_name, supplier_id=ph.source_id, data=[]
             )
-        series_map[ph.supplier_id].data.append(
+        series_map[ph.source_id].data.append(
             ChartDataPoint(timestamp=ph.captured_at, price=ph.price)
         )
 
@@ -290,7 +294,7 @@ async def get_dashboard_stats(session: AsyncSession) -> DashboardStats:
     active_sources = (await session.execute(
         select(func.count(Source.id)).where(Source.is_active == True)  # noqa: E712
     )).scalar() or 0
-    total_suppliers = (await session.execute(select(func.count(Supplier.id)))).scalar() or 0
+    total_suppliers = active_sources  # source = supplier
     total_offers = (await session.execute(
         select(func.count(Offer.id)).where(Offer.is_current == True)  # noqa: E712
     )).scalar() or 0
@@ -318,39 +322,50 @@ async def get_dashboard_stats(session: AsyncSession) -> DashboardStats:
     )
 
 
-# ---------- Batch helpers — fix N+1 queries ----------
+# ---------- Batch helpers ----------
 
 async def _batch_best_suppliers(
     session: AsyncSession,
     product_ids: list[int],
-) -> dict[int, tuple[str, int]]:
-    """Get best supplier per product in a single query."""
+) -> dict[int, tuple[str, int, Optional[str], Optional[str]]]:
+    """Get best, 2nd, 3rd supplier names per product via Source.source_name."""
     if not product_ids:
         return {}
 
-    # Subquery: min price per product
-    min_price_sq = (
-        select(Offer.product_id, func.min(Offer.price).label("min_price"))
-        .where(and_(Offer.is_current == True, Offer.product_id.in_(product_ids)))  # noqa: E712
-        .group_by(Offer.product_id)
-        .subquery()
-    )
-
+    # All current offers for these products, joined to Source
     result = await session.execute(
-        select(Offer.product_id, Supplier.display_name, Supplier.id)
-        .join(Supplier, Offer.supplier_id == Supplier.id)
-        .join(min_price_sq, and_(
-            Offer.product_id == min_price_sq.c.product_id,
-            Offer.price == min_price_sq.c.min_price,
-        ))
-        .where(Offer.is_current == True)  # noqa: E712
-        .order_by(Offer.product_id, Supplier.priority.desc())
+        select(Offer.product_id, Offer.price, Source.id, Source.source_name)
+        .join(Source, Offer.source_id == Source.id)
+        .where(and_(Offer.is_current == True, Offer.product_id.in_(product_ids)))  # noqa: E712
+        .order_by(Offer.product_id, Offer.price)
     )
     rows = result.all()
-    out: dict[int, tuple[str, int]] = {}
-    for product_id, display_name, supplier_id in rows:
-        if product_id not in out:  # keep first (highest priority)
-            out[product_id] = (display_name, supplier_id)
+
+    from collections import defaultdict
+    # product_id -> list of (price, source_id, source_name) sorted by price asc
+    product_offers: dict[int, list[tuple]] = defaultdict(list)
+    for product_id, price, source_id, source_name in rows:
+        product_offers[product_id].append((price, source_id, source_name))
+
+    out: dict[int, tuple[str, int, Optional[str], Optional[str]]] = {}
+    for product_id, offers in product_offers.items():
+        # deduplicate by source_id, keep lowest price per source
+        seen: dict[int, tuple] = {}
+        for price, source_id, source_name in offers:
+            if source_id not in seen:
+                seen[source_id] = (price, source_id, source_name)
+        sorted_offers = sorted(seen.values(), key=lambda x: x[0])
+
+        best = sorted_offers[0] if len(sorted_offers) > 0 else None
+        second = sorted_offers[1] if len(sorted_offers) > 1 else None
+        third = sorted_offers[2] if len(sorted_offers) > 2 else None
+
+        out[product_id] = (
+            best[2] if best else "Unknown",
+            best[1] if best else 0,
+            second[2] if second else None,
+            third[2] if third else None,
+        )
     return out
 
 
@@ -358,7 +373,7 @@ async def _batch_runner_up_prices(
     session: AsyncSession,
     product_ids: list[int],
 ) -> dict[int, tuple[Optional[Decimal], Optional[Decimal]]]:
-    """Get 2nd and 3rd best prices per product in a single query."""
+    """Get 2nd and 3rd best prices per product."""
     if not product_ids:
         return {}
 
@@ -369,7 +384,6 @@ async def _batch_runner_up_prices(
     )
     rows = result.all()
 
-    # Group by product, deduplicate prices, pick 2nd and 3rd
     from collections import defaultdict
     prices_map: dict[int, list[Decimal]] = defaultdict(list)
     for product_id, price in rows:
@@ -388,18 +402,12 @@ async def _batch_price_change_3d(
     session: AsyncSession,
     product_ids: list[int],
 ) -> dict[int, tuple[Optional[Decimal], Optional[float]]]:
-    """
-    Calculate 3-day price change per product.
-    Change = current_best_price - oldest_min_price in last 3 days.
-    FIX: was using func.min() which always returned 0 change.
-    Now uses the FIRST recorded price in the window vs current.
-    """
+    """Calculate 3-day price change per product."""
     if not product_ids:
         return {}
 
     three_days_ago = datetime.now(timezone.utc) - timedelta(days=3)
 
-    # Oldest price per product in last 3 days
     oldest_sq = (
         select(
             PriceHistory.product_id,
@@ -422,7 +430,6 @@ async def _batch_price_change_3d(
     )
     oldest_prices = {row[0]: row[1] for row in result.all()}
 
-    # Current best prices
     current_sq = (
         select(Offer.product_id, func.min(Offer.price).label("best_price"))
         .where(and_(Offer.is_current == True, Offer.product_id.in_(product_ids)))  # noqa: E712
