@@ -39,7 +39,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   if (!res.ok) {
     throw new Error(`API Error: ${res.status} ${res.statusText}`);
   }
-  return res.json();
+  // 204 / empty body
+  const text = await res.text();
+  return text ? JSON.parse(text) : (undefined as T);
 }
 
 function delay(ms: number = 200) {
@@ -136,6 +138,16 @@ export async function toggleSource(id: number): Promise<Source> {
   return request(`/sources/${id}`, { method: 'PUT', body: JSON.stringify({ is_active: !source.is_active }) });
 }
 
+export async function deleteSource(id: number, deleteMessages: boolean = false): Promise<void> {
+  if (USE_MOCKS) {
+    await delay(250);
+    const idx = mockSources.findIndex(s => s.id === id);
+    if (idx !== -1) mockSources.splice(idx, 1);
+    return;
+  }
+  await request(`/sources/${id}${deleteMessages ? '?delete_messages=true' : ''}`, { method: 'DELETE' });
+}
+
 // ==================== Suppliers ====================
 export async function getSuppliers(): Promise<Supplier[]> {
   if (USE_MOCKS) {
@@ -162,6 +174,16 @@ export async function resolveMessage(id: number, data: ResolveRequest): Promise<
     return;
   }
   return request(`/unresolved/${id}/resolve`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function retryMessages(ids: number[]): Promise<void> {
+  if (USE_MOCKS) { await delay(300); return; }
+  return request('/unresolved/retry', { method: 'POST', body: JSON.stringify({ message_ids: ids }) });
+}
+
+export async function retryAllFailed(): Promise<void> {
+  if (USE_MOCKS) { await delay(300); return; }
+  return request('/unresolved/retry-all', { method: 'POST' });
 }
 
 export async function bulkReparse(ids: number[]): Promise<void> {

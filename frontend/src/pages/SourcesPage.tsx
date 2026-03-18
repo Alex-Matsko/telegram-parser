@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSources, createSource, updateSource, toggleSource, getBotScenarios, createBotScenario, updateBotScenario } from '../api/client';
+import {
+  getSources, createSource, updateSource, toggleSource, deleteSource,
+  getBotScenarios, createBotScenario, updateBotScenario,
+} from '../api/client';
 import type { Source, SourceCreate, BotScenario, BotScenarioStep } from '../types';
 import SourceList from '../components/Sources/SourceList';
 import SourceForm from '../components/Sources/SourceForm';
@@ -26,33 +29,29 @@ export default function SourcesPage() {
 
   const createMutation = useMutation({
     mutationFn: createSource,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sources'] });
-      setShowForm(false);
-    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['sources'] }); setShowForm(false); },
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: number; data: Partial<SourceCreate> }) => updateSource(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sources'] });
-      setEditingSource(null);
-    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['sources'] }); setEditingSource(null); },
   });
 
   const toggleMutation = useMutation({
     mutationFn: toggleSource,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sources'] });
-    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['sources'] }); },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: ({ id, deleteMessages }: { id: number; deleteMessages: boolean }) =>
+      deleteSource(id, deleteMessages),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['sources'] }); },
   });
 
   const createScenarioMutation = useMutation({
-    mutationFn: (data: { bot_name: string; scenario_name: string; steps_json: BotScenarioStep[] }) => createBotScenario(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['botScenarios'] });
-      setShowScenarioEditor(false);
-    },
+    mutationFn: (data: { bot_name: string; scenario_name: string; steps_json: BotScenarioStep[] }) =>
+      createBotScenario(data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['botScenarios'] }); setShowScenarioEditor(false); },
   });
 
   const updateScenarioMutation = useMutation({
@@ -96,7 +95,6 @@ export default function SourcesPage() {
         </button>
       </div>
 
-      {/* Sources Table */}
       <div className="card overflow-hidden">
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
@@ -107,12 +105,12 @@ export default function SourcesPage() {
             sources={sources}
             onEdit={source => { setEditingSource(source); setShowForm(true); }}
             onToggle={id => toggleMutation.mutate(id)}
+            onDelete={(id, deleteMessages) => deleteMutation.mutate({ id, deleteMessages })}
             onManageScenario={handleManageScenario}
           />
         ) : null}
       </div>
 
-      {/* Bot Scenarios Section */}
       {scenarios && scenarios.length > 0 && (
         <div className="card overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">
@@ -160,7 +158,6 @@ export default function SourcesPage() {
         </div>
       )}
 
-      {/* Modals */}
       {showForm && (
         <SourceForm
           source={editingSource}
