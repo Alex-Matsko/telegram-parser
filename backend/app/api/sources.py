@@ -3,12 +3,13 @@ from typing import Optional
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
-from sqlalchemy import select
+from pydantic import BaseModel
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.source import Source
+from app.models.raw_message import RawMessage
 
 router = APIRouter(prefix="/sources", tags=["sources"])
 
@@ -82,28 +83,54 @@ async def create_source(data: SourceCreate, db: AsyncSession = Depends(get_db)):
 async def update_source(
     source_id: int, data: SourceUpdate, db: AsyncSession = Depends(get_db)
 ):
-    """Update a source — including linking a supplier_id."""
     result = await db.execute(select(Source).where(Source.id == source_id))
     source = result.scalar_one_or_none()
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
-
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(source, field, value)
-
     await db.commit()
     await db.refresh(source)
     return source
 
 
-@router.delete("/{source_id}", status_code=204)
-async def delete_source(source_id: int, db: AsyncSession = Depends(get_db)):
+@router.delete("/{source_id}", status_code=200)
+async def delete_source(
+    source_id: int,
+    delete_messages: bool = False,   # ?delete_messages=true — also wipes raw messages
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete a source.
+    By default keeps raw_messages (sets source_id to NULL via FK or marks inactive).
+    Pass ?delete_messages=true to also delete all collected raw messages for this source.
+    """
     result = await db.execute(select(Source).where(Source.id == source_id))
     source = result.scalar_one_or_none()
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
+
+    messages_deleted = 0
+    if delete_messages:
+        msgs_result = await db.execute(
+            select(RawMessage).where(RawMessage.source_id == source_id)
+        )
+        msgs = msgs_result.scalars().all()
+        messages_deleted = len(msgs)
+        for msg in msgs:
+            await db.delete(msg)
+        await db.flush()
+
+    source_name = source.source_name
     await db.delete(source)
     await db.commit()
+
+    return {
+        "deleted": True,
+        "source_id": source_id,
+        "source_name": source_name,
+        "messages_deleted": messages_deleted,
+    }
 
 
 @router.post("/{source_id}/trigger", status_code=202)
@@ -117,3 +144,19 @@ async def trigger_collect(source_id: int, db: AsyncSession = Depends(get_db)):
     from app.tasks.collect import collect_from_source
     task = collect_from_source.delay(source_id)
     return {"task_id": task.id, "source_id": source_id, "status": "queued"}
+
+
+@router.post("/{source_id}/reset-errors", status_code=200)
+async def reset_source_errors(
+    source_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset error counter for a source so it becomes active again."""
+    result = await db.execute(select(Source).where(Source.id == source_id))
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+    source.error_count = 0
+    source.last_error = None
+    await db.commit()
+    return {"source_id": source_id, "error_count": 0}

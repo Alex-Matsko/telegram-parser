@@ -19,15 +19,18 @@ async def list_prices(
     memory: Optional[str] = Query(None),
     color: Optional[str] = Query(None),
     condition: Optional[str] = Query(None),
-    supplier: Optional[str] = Query(None),
+    supplier_id: Optional[int] = Query(None),          # fixed: was str 'supplier'
     currency: Optional[str] = Query(None),
     price_min: Optional[float] = Query(None, ge=0),
     price_max: Optional[float] = Query(None, ge=0),
     updated_after: Optional[datetime] = Query(None),
-    sort_by: str = Query("best_price", pattern="^(best_price|model|brand|offer_count|last_updated)$"),
+    sort_by: str = Query(
+        "best_price",
+        pattern="^(best_price|model|brand|offer_count|last_updated)$",
+    ),
     order: str = Query("asc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
-    per_page: int = Query(50, ge=1, le=200),
+    per_page: int = Query(25, ge=1, le=200),
     session: AsyncSession = Depends(get_session),
 ) -> PriceListResponse:
     """Get consolidated price list with filtering, sorting, and pagination."""
@@ -38,7 +41,7 @@ async def list_prices(
         memory=memory,
         color=color,
         condition=condition,
-        supplier=supplier,
+        supplier_id=supplier_id,
         currency=currency,
         price_min=price_min,
         price_max=price_max,
