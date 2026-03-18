@@ -20,7 +20,9 @@ class RawMessage(Base):
     __tablename__ = "raw_messages"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    source_id = Column(Integer, ForeignKey("sources.id"), nullable=False)
+    # nullable=True: when a source is deleted without delete_messages=True,
+    # messages are kept with source_id set to NULL
+    source_id = Column(Integer, ForeignKey("sources.id", ondelete="SET NULL"), nullable=True)
     telegram_message_id = Column(BigInteger, nullable=False)
     message_text = Column(Text, nullable=False)
     message_date = Column(DateTime(timezone=True), nullable=False)
