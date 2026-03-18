@@ -1,18 +1,18 @@
-from datetime import datetime
 from typing import Optional
+from pydantic import BaseModel, model_validator
 
-from pydantic import BaseModel
 
-
-class SupplierBase(BaseModel):
+class SupplierCreate(BaseModel):
     name: str
-    display_name: str
+    display_name: Optional[str] = None  # defaults to name if not provided
     priority: int = 0
     is_active: bool = True
 
-
-class SupplierCreate(SupplierBase):
-    pass
+    @model_validator(mode="after")
+    def set_display_name(self) -> "SupplierCreate":
+        if not self.display_name:
+            self.display_name = self.name
+        return self
 
 
 class SupplierUpdate(BaseModel):
@@ -22,8 +22,12 @@ class SupplierUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
-class SupplierResponse(SupplierBase):
+class SupplierResponse(BaseModel):
     id: int
-    created_at: datetime
+    name: str
+    display_name: str
+    priority: int
+    is_active: bool
 
-    model_config = {"from_attributes": True}
+    class Config:
+        from_attributes = True
