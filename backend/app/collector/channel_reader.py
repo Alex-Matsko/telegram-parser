@@ -138,7 +138,7 @@ async def _get_sender_name(message: Message) -> Optional[str]:
                 parts = [sender.first_name or ""]
                 if hasattr(sender, "last_name") and sender.last_name:
                     parts.append(sender.last_name)
-                return " \".join(parts).strip() or None
+                return " ".join(parts).strip() or None
             if hasattr(sender, "title"):
                 return sender.title
     except Exception:
