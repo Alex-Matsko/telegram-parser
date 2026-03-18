@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import type { Source } from '../../types';
-import { Edit2, Power, Bot, Trash2, AlertTriangle } from 'lucide-react';
+import { Edit2, Power, Bot, Trash2, AlertTriangle, BarChart2 } from 'lucide-react';
 
 interface Props {
   sources: Source[];
   onEdit: (source: Source) => void;
   onToggle: (id: number) => void;
   onDelete: (id: number, deleteMessages: boolean) => void;
+  onStats: (source: Source) => void;
   onManageScenario: (source: Source) => void;
 }
 
@@ -16,32 +17,24 @@ function getStatusDot(source: Source) {
   if (source.error_count > 0) return 'status-dot-yellow';
   return 'status-dot-green';
 }
-
 function getTypeLabel(type: string) {
   switch (type) {
     case 'channel': return 'Канал';
-    case 'group': return 'Группа';
-    case 'bot': return 'Бот';
-    default: return type;
+    case 'group':   return 'Группа';
+    case 'bot':     return 'Бот';
+    default:        return type;
   }
 }
-
 function getStrategyLabel(s: string) {
   switch (s) {
-    case 'auto': return 'Авто';
+    case 'auto':  return 'Авто';
     case 'regex': return 'Regex';
-    case 'llm': return 'LLM';
-    default: return s;
+    case 'llm':   return 'LLM';
+    default:      return s;
   }
 }
 
-interface DeleteModalProps {
-  source: Source;
-  onConfirm: (deleteMessages: boolean) => void;
-  onCancel: () => void;
-}
-
-function DeleteConfirmModal({ source, onConfirm, onCancel }: DeleteModalProps) {
+function DeleteConfirmModal({ source, onConfirm, onCancel }: { source: Source; onConfirm: (d: boolean) => void; onCancel: () => void }) {
   const [deleteMessages, setDeleteMessages] = useState(false);
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
@@ -50,40 +43,21 @@ function DeleteConfirmModal({ source, onConfirm, onCancel }: DeleteModalProps) {
           <AlertTriangle className="w-4 h-4 text-negative flex-shrink-0" />
           <h3 className="text-sm font-semibold text-gray-100">Удалить источник?</h3>
         </div>
-        <p className="text-xs text-gray-400 mb-4">
-          Источник <span className="text-gray-200 font-medium">{source.source_name}</span> будет удалён безвозвратно.
-        </p>
+        <p className="text-xs text-gray-400 mb-4">Источник <span className="text-gray-200 font-medium">{source.source_name}</span> будет удалён безвозвратно.</p>
         <label className="flex items-center gap-2 mb-5 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={deleteMessages}
-            onChange={e => setDeleteMessages(e.target.checked)}
-            className="w-3.5 h-3.5 rounded accent-negative"
-          />
-          <span className="text-xs text-gray-400">
-            Также удалить все собранные сообщения
-          </span>
+          <input type="checkbox" checked={deleteMessages} onChange={e => setDeleteMessages(e.target.checked)} className="w-3.5 h-3.5 rounded accent-negative" />
+          <span className="text-xs text-gray-400">Также удалить все собранные сообщения</span>
         </label>
         <div className="flex gap-2 justify-end">
-          <button
-            onClick={onCancel}
-            className="px-3 py-1.5 text-xs rounded-lg bg-surface-600 text-gray-300 hover:bg-surface-500 transition-colors"
-          >
-            Отмена
-          </button>
-          <button
-            onClick={() => onConfirm(deleteMessages)}
-            className="px-3 py-1.5 text-xs rounded-lg bg-negative/90 text-white hover:bg-negative transition-colors font-medium"
-          >
-            Удалить
-          </button>
+          <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded-lg bg-surface-600 text-gray-300 hover:bg-surface-500 transition-colors">Отмена</button>
+          <button onClick={() => onConfirm(deleteMessages)} className="px-3 py-1.5 text-xs rounded-lg bg-negative/90 text-white hover:bg-negative transition-colors font-medium">Удалить</button>
         </div>
       </div>
     </div>
   );
 }
 
-export default function SourceList({ sources, onEdit, onToggle, onDelete, onManageScenario }: Props) {
+export default function SourceList({ sources, onEdit, onToggle, onDelete, onStats, onManageScenario }: Props) {
   const [deletingSource, setDeletingSource] = useState<Source | null>(null);
 
   const formatTime = (iso: string | null) => {
@@ -127,9 +101,7 @@ export default function SourceList({ sources, onEdit, onToggle, onDelete, onMana
                   <div>
                     <span className="text-gray-200 font-medium">{source.source_name}</span>
                     {source.last_error && (
-                      <div className="text-[10px] text-negative/80 mt-0.5 truncate max-w-xs" title={source.last_error}>
-                        {source.last_error}
-                      </div>
+                      <div className="text-[10px] text-negative/80 mt-0.5 truncate max-w-xs" title={source.last_error}>{source.last_error}</div>
                     )}
                   </div>
                 </td>
@@ -146,45 +118,32 @@ export default function SourceList({ sources, onEdit, onToggle, onDelete, onMana
                 <td className="px-4 py-2.5 text-gray-400">{getStrategyLabel(source.parsing_strategy)}</td>
                 <td className="px-4 py-2.5 text-right text-gray-400">{formatTime(source.last_read_at)}</td>
                 <td className="px-4 py-2.5 text-right">
-                  <span className={source.error_count > 0 ? 'text-negative font-medium' : 'text-gray-500'}>
-                    {source.error_count}
-                  </span>
+                  <span className={source.error_count > 0 ? 'text-negative font-medium' : 'text-gray-500'}>{source.error_count}</span>
                 </td>
                 <td className="px-4 py-2.5 text-right text-gray-400">{source.poll_interval_minutes} мин</td>
                 <td className="px-4 py-2.5 text-right">
                   <div className="flex items-center justify-end gap-1">
                     {source.type === 'bot' && (
-                      <button
-                        onClick={() => onManageScenario(source)}
-                        className="p-1.5 rounded text-gray-500 hover:text-warning hover:bg-surface-600 transition-colors"
-                        title="Сценарий бота"
-                      >
+                      <button onClick={() => onManageScenario(source)} className="p-1.5 rounded text-gray-500 hover:text-warning hover:bg-surface-600 transition-colors" title="Сценарий бота">
                         <Bot className="w-3.5 h-3.5" />
                       </button>
                     )}
-                    <button
-                      onClick={() => onEdit(source)}
-                      className="p-1.5 rounded text-gray-500 hover:text-accent hover:bg-surface-600 transition-colors"
-                      title="Редактировать"
-                    >
+                    <button onClick={() => onStats(source)} className="p-1.5 rounded text-gray-500 hover:text-accent hover:bg-surface-600 transition-colors" title="Логи и статистика">
+                      <BarChart2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => onEdit(source)} className="p-1.5 rounded text-gray-500 hover:text-accent hover:bg-surface-600 transition-colors" title="Редактировать">
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => onToggle(source.id)}
                       className={`p-1.5 rounded transition-colors ${
-                        source.is_active
-                          ? 'text-positive hover:text-negative hover:bg-surface-600'
-                          : 'text-gray-600 hover:text-positive hover:bg-surface-600'
+                        source.is_active ? 'text-positive hover:text-negative hover:bg-surface-600' : 'text-gray-600 hover:text-positive hover:bg-surface-600'
                       }`}
                       title={source.is_active ? 'Выключить' : 'Включить'}
                     >
                       <Power className="w-3.5 h-3.5" />
                     </button>
-                    <button
-                      onClick={() => setDeletingSource(source)}
-                      className="p-1.5 rounded text-gray-600 hover:text-negative hover:bg-surface-600 transition-colors"
-                      title="Удалить источник"
-                    >
+                    <button onClick={() => setDeletingSource(source)} className="p-1.5 rounded text-gray-600 hover:text-negative hover:bg-surface-600 transition-colors" title="Удалить">
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
@@ -194,14 +153,10 @@ export default function SourceList({ sources, onEdit, onToggle, onDelete, onMana
           </tbody>
         </table>
       </div>
-
       {deletingSource && (
         <DeleteConfirmModal
           source={deletingSource}
-          onConfirm={(deleteMessages) => {
-            onDelete(deletingSource.id, deleteMessages);
-            setDeletingSource(null);
-          }}
+          onConfirm={d => { onDelete(deletingSource.id, d); setDeletingSource(null); }}
           onCancel={() => setDeletingSource(null)}
         />
       )}

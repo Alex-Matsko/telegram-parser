@@ -28,6 +28,39 @@ export interface SourceCreate {
   bot_scenario_id?: number | null;
 }
 
+export interface RecentMessage {
+  id: number;
+  message_text: string;
+  message_date: string;
+  parse_status: 'pending' | 'parsed' | 'failed' | 'needs_review';
+  parse_error: string | null;
+}
+
+export interface SourceStats {
+  source_id: number;
+  source_name: string;
+  telegram_id: number;
+  type: string;
+  is_active: boolean;
+  supplier_id: number | null;
+  last_read_at: string | null;
+  error_count: number;
+  last_error: string | null;
+  poll_interval_minutes: number;
+  parsing_strategy: string;
+  messages_total: number;
+  messages_24h: number;
+  messages_pending: number;
+  messages_parsed: number;
+  messages_failed: number;
+  messages_needs_review: number;
+  parse_success_rate: number;
+  offers_total: number;
+  offers_current: number;
+  products_covered: number;
+  recent_messages: RecentMessage[];
+}
+
 // ==================== Supplier Types ====================
 export interface Supplier {
   id: number;
@@ -108,7 +141,7 @@ export interface PriceListFilters {
   memory?: string;
   color?: string;
   condition?: string;
-  supplier?: string;
+  supplier_id?: number;
   currency?: string;
   price_min?: number;
   price_max?: number;
