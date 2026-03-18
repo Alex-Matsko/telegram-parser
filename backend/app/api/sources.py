@@ -1,8 +1,9 @@
 """Sources API — manage Telegram data sources."""
 from typing import Optional
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,11 +15,11 @@ router = APIRouter(prefix="/sources", tags=["sources"])
 
 class SourceCreate(BaseModel):
     source_name: str
-    type: str  # channel / group / bot
-    telegram_id: str
+    type: str
+    telegram_id: int
     supplier_id: Optional[int] = None
     is_active: bool = True
-    poll_interval: int = 900
+    poll_interval_minutes: int = 30
     parsing_strategy: str = "auto"
     bot_scenario_id: Optional[int] = None
 
@@ -26,10 +27,10 @@ class SourceCreate(BaseModel):
 class SourceUpdate(BaseModel):
     source_name: Optional[str] = None
     type: Optional[str] = None
-    telegram_id: Optional[str] = None
+    telegram_id: Optional[int] = None
     supplier_id: Optional[int] = None
     is_active: Optional[bool] = None
-    poll_interval: Optional[int] = None
+    poll_interval_minutes: Optional[int] = None
     parsing_strategy: Optional[str] = None
     bot_scenario_id: Optional[int] = None
 
@@ -38,16 +39,16 @@ class SourceResponse(BaseModel):
     id: int
     source_name: str
     type: str
-    telegram_id: str
-    supplier_id: Optional[int]
+    telegram_id: int
+    supplier_id: Optional[int] = None
     is_active: bool
-    poll_interval: int
+    poll_interval_minutes: int
     parsing_strategy: str
-    bot_scenario_id: Optional[int]
-    last_message_id: Optional[int]
-    last_read_at: Optional[str]
-    error_count: Optional[int]
-    last_error: Optional[str]
+    bot_scenario_id: Optional[int] = None
+    last_message_id: Optional[int] = None
+    last_read_at: Optional[datetime] = None
+    error_count: Optional[int] = None
+    last_error: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -55,7 +56,6 @@ class SourceResponse(BaseModel):
 
 @router.get("", response_model=list[SourceResponse])
 async def list_sources(db: AsyncSession = Depends(get_db)):
-    """List all configured Telegram sources."""
     result = await db.execute(select(Source).order_by(Source.id))
     return result.scalars().all()
 
@@ -71,7 +71,6 @@ async def get_source(source_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.post("", response_model=SourceResponse, status_code=201)
 async def create_source(data: SourceCreate, db: AsyncSession = Depends(get_db)):
-    """Create a new Telegram source."""
     source = Source(**data.model_dump())
     db.add(source)
     await db.commit()
@@ -89,8 +88,7 @@ async def update_source(
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
 
-    update_data = data.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
+    for field, value in data.model_dump(exclude_unset=True).items():
         setattr(source, field, value)
 
     await db.commit()
@@ -110,10 +108,7 @@ async def delete_source(source_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{source_id}/trigger", status_code=202)
 async def trigger_collect(source_id: int, db: AsyncSession = Depends(get_db)):
-    """
-    Manually trigger collection for a single source.
-    Useful for testing without waiting for the scheduler.
-    """
+    """Manually trigger collection for a single source."""
     result = await db.execute(select(Source).where(Source.id == source_id))
     source = result.scalar_one_or_none()
     if not source:
