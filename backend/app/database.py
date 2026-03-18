@@ -39,6 +39,10 @@ async def get_session() -> AsyncSession:
             raise
 
 
+# Alias used by API routers (sources.py, suppliers.py, etc.)
+get_db = get_session
+
+
 @asynccontextmanager
 async def get_isolated_session():
     """

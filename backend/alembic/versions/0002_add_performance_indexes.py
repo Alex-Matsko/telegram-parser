@@ -1,13 +1,13 @@
 """Add performance indexes for frequent query patterns.
 
 Revision ID: 0002
-Revises: 0001
+Revises: 0001_initial_schema
 Create Date: 2026-03-18
 """
 from alembic import op
 
 revision = "0002"
-down_revision = None  # Set to your previous migration revision ID
+down_revision = "0001"  # links to 001_initial_schema.py
 branch_labels = None
 depends_on = None
 
@@ -31,7 +31,7 @@ def upgrade() -> None:
         "offers",
         ["product_id", "supplier_id"],
     )
-    # price_history: used in 3-day history queries (ТЗ 4.7)
+    # price_history: used in 3-day history queries (TZ 4.7)
     op.create_index(
         "ix_price_history_product_captured",
         "price_history",
@@ -42,7 +42,7 @@ def upgrade() -> None:
         "price_history",
         ["supplier_id", "captured_at"],
     )
-    # product_catalog: SKU lookup (already has unique, but explicit for clarity)
+    # product_catalog: SKU lookup
     op.create_index(
         "ix_product_catalog_brand_model",
         "product_catalog",
