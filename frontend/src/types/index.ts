@@ -141,7 +141,7 @@ export interface PriceListFilters {
   memory?: string;
   color?: string;
   condition?: string;
-  supplier_id?: number;
+  supplier?: string;       // filter by supplier name (used in PriceListFilters UI)
   currency?: string;
   price_min?: number;
   price_max?: number;
