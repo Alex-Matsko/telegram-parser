@@ -43,7 +43,7 @@ export default function PriceListTable({ data, total, page, perPage, totalPages,
   };
 
   const formatPrice = (price: number | null, currency?: string) => {
-    if (price == null) return '—';
+    if (price == null) return null;
     const cur = currency || 'RUB';
     if (cur === 'USD') return `$${price.toLocaleString('ru-RU')}`;
     return `${price.toLocaleString('ru-RU')} ₽`;
@@ -65,6 +65,22 @@ export default function PriceListTable({ data, total, page, perPage, totalPages,
     refurbished: 'Восст.',
   };
 
+  // Price + supplier stacked cell
+  const PriceCell = ({
+    price, supplier, currency, priceClass,
+  }: { price: number | null; supplier: string | null; currency: string; priceClass: string }) => {
+    const formatted = formatPrice(price, currency);
+    if (!formatted) return <span className="text-xs text-gray-600">—</span>;
+    return (
+      <div>
+        <span className={`font-mono font-semibold ${priceClass}`}>{formatted}</span>
+        {supplier && (
+          <div className="text-[10px] text-gray-500 truncate max-w-[110px]" title={supplier}>{supplier}</div>
+        )}
+      </div>
+    );
+  };
+
   const columns: ColumnDef<PriceListItem>[] = useMemo(() => [
     {
       id: 'expand',
@@ -77,15 +93,14 @@ export default function PriceListTable({ data, total, page, perPage, totalPages,
         >
           {expandedRows.has(row.original.product_id)
             ? <ChevronDown className="w-3.5 h-3.5" />
-            : <ChevronRight className="w-3.5 h-3.5" />
-          }
+            : <ChevronRight className="w-3.5 h-3.5" />}
         </button>
       ),
     },
     {
       accessorKey: 'product_name',
       header: 'Товар',
-      size: 280,
+      size: 260,
       cell: ({ row }) => {
         const item = row.original;
         return (
@@ -101,39 +116,40 @@ export default function PriceListTable({ data, total, page, perPage, totalPages,
     {
       accessorKey: 'best_price',
       header: 'Лучшая цена',
-      size: 120,
+      size: 130,
       cell: ({ row }) => (
-        <span className="font-mono font-semibold text-positive text-sm">
-          {formatPrice(row.original.best_price, row.original.currency)}
-        </span>
-      ),
-    },
-    {
-      accessorKey: 'best_supplier',
-      header: 'Поставщик',
-      size: 120,
-      cell: ({ row }) => (
-        <span className="text-xs text-gray-300">{row.original.best_supplier}</span>
+        <PriceCell
+          price={row.original.best_price}
+          supplier={row.original.best_supplier}
+          currency={row.original.currency}
+          priceClass="text-positive text-sm"
+        />
       ),
     },
     {
       accessorKey: 'second_price',
       header: '2-я цена',
-      size: 110,
+      size: 130,
       cell: ({ row }) => (
-        <span className="font-mono text-xs text-gray-400">
-          {formatPrice(row.original.second_price, row.original.currency)}
-        </span>
+        <PriceCell
+          price={row.original.second_price}
+          supplier={row.original.second_supplier}
+          currency={row.original.currency}
+          priceClass="text-gray-300 text-xs"
+        />
       ),
     },
     {
       accessorKey: 'third_price',
       header: '3-я цена',
-      size: 110,
+      size: 130,
       cell: ({ row }) => (
-        <span className="font-mono text-xs text-gray-500">
-          {formatPrice(row.original.third_price, row.original.currency)}
-        </span>
+        <PriceCell
+          price={row.original.third_price}
+          supplier={row.original.third_supplier}
+          currency={row.original.currency}
+          priceClass="text-gray-400 text-xs"
+        />
       ),
     },
     {
@@ -142,12 +158,9 @@ export default function PriceListTable({ data, total, page, perPage, totalPages,
       size: 90,
       cell: ({ row }) => {
         const spread = row.original.spread;
-        if (spread == null) return <span className="text-xs text-gray-600">—</span>;
-        return (
-          <span className="font-mono text-xs text-warning">
-            {formatPrice(spread, row.original.currency)}
-          </span>
-        );
+        const formatted = formatPrice(spread, row.original.currency);
+        if (!formatted) return <span className="text-xs text-gray-600">—</span>;
+        return <span className="font-mono text-xs text-warning">{formatted}</span>;
       },
     },
     {
@@ -201,7 +214,6 @@ export default function PriceListTable({ data, total, page, perPage, totalPages,
 
   return (
     <div className="flex flex-col h-full">
-      {/* Table */}
       <div className="flex-1 overflow-auto">
         <table className="w-full text-left border-collapse">
           <thead className="sticky top-0 z-10 bg-surface-800">
@@ -269,9 +281,7 @@ export default function PriceListTable({ data, total, page, perPage, totalPages,
             disabled={page <= 1}
             onClick={() => onFiltersChange({ ...filters, page: page - 1 })}
             className="px-2 py-1 rounded bg-surface-700 hover:bg-surface-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            ← Назад
-          </button>
+          >← Назад</button>
           {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
             const p = i + 1;
             return (
@@ -279,22 +289,16 @@ export default function PriceListTable({ data, total, page, perPage, totalPages,
                 key={p}
                 onClick={() => onFiltersChange({ ...filters, page: p })}
                 className={`px-2 py-1 rounded transition-colors ${
-                  p === page
-                    ? 'bg-accent text-white'
-                    : 'bg-surface-700 hover:bg-surface-600'
+                  p === page ? 'bg-accent text-white' : 'bg-surface-700 hover:bg-surface-600'
                 }`}
-              >
-                {p}
-              </button>
+              >{p}</button>
             );
           })}
           <button
             disabled={page >= totalPages}
             onClick={() => onFiltersChange({ ...filters, page: page + 1 })}
             className="px-2 py-1 rounded bg-surface-700 hover:bg-surface-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            Вперёд →
-          </button>
+          >Вперёд →</button>
         </div>
       </div>
     </div>

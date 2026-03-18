@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import select
@@ -13,28 +13,41 @@ from app.models.source import Source
 
 logger = logging.getLogger(__name__)
 
+HISTORY_DAYS = 7  # how far back to look on first run
+
 
 async def read_channel_messages(
     client: TelegramClient,
     source: Source,
     session: AsyncSession,
-    limit: int = 100,
+    limit: int = 500,
 ) -> int:
     """
     Read new messages from a Telegram channel or group.
+
+    - First run (last_message_id is None): fetches up to `limit` messages
+      from the last HISTORY_DAYS days.
+    - Subsequent runs: fetches only messages newer than last_message_id.
 
     Returns the number of new messages saved.
     """
     saved_count = 0
     try:
         entity = await client.get_entity(source.telegram_id)
+
+        is_first_run = source.last_message_id is None
         min_id = source.last_message_id or 0
+        offset_date = (
+            datetime.now(timezone.utc) - timedelta(days=HISTORY_DAYS)
+            if is_first_run else None
+        )
 
         messages: list[Message] = []
         async for message in client.iter_messages(
             entity,
             limit=limit,
             min_id=min_id,
+            offset_date=offset_date,
             reverse=True,
         ):
             if message.text:
@@ -73,7 +86,6 @@ async def read_channel_messages(
             if msg.id > last_msg_id:
                 last_msg_id = msg.id
 
-        # Update source tracking
         source.last_message_id = last_msg_id
         source.last_read_at = datetime.now(timezone.utc)
         source.error_count = 0
@@ -81,8 +93,8 @@ async def read_channel_messages(
         await session.flush()
 
         logger.info(
-            f"Saved {saved_count} new messages from source "
-            f"{source.source_name} (id={source.id})"
+            f"[{'first-run' if is_first_run else 'incremental'}] "
+            f"Saved {saved_count} new messages from {source.source_name} (id={source.id})"
         )
 
     except Exception as e:
@@ -96,7 +108,6 @@ async def read_channel_messages(
 
 
 async def _get_sender_name(message: Message) -> Optional[str]:
-    """Extract sender name from a Telegram message."""
     try:
         if message.sender:
             sender = message.sender
@@ -113,7 +124,6 @@ async def _get_sender_name(message: Message) -> Optional[str]:
 
 
 async def get_active_sources(session: AsyncSession) -> list[Source]:
-    """Get all active sources that need to be polled."""
     result = await session.execute(
         select(Source).where(Source.is_active == True)  # noqa: E712
     )
