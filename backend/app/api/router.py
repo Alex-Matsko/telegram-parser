@@ -35,11 +35,11 @@ async def get_filters(
 ) -> dict:
     """
     Return all distinct filter values for the frontend dropdowns.
-    Frontend calls GET /api/filters — was returning 404 before.
+    Suppliers are taken from active Sources (source = supplier in this system).
     """
     from sqlalchemy import select, distinct
     from app.models.product_catalog import ProductCatalog
-    from app.models.supplier import Supplier
+    from app.models.source import Source
 
     brands = (await session.execute(
         select(distinct(ProductCatalog.brand)).where(ProductCatalog.brand.isnot(None))
@@ -61,8 +61,11 @@ async def get_filters(
         select(distinct(ProductCatalog.condition)).where(ProductCatalog.condition.isnot(None))
     )).scalars().all()
 
-    suppliers = (await session.execute(
-        select(Supplier.id, Supplier.display_name).where(Supplier.is_active == True)  # noqa: E712
+    # Source = supplier: use source_name as display name
+    sources = (await session.execute(
+        select(Source.id, Source.source_name)
+        .where(Source.is_active == True)  # noqa: E712
+        .order_by(Source.source_name)
     )).all()
 
     return {
@@ -71,6 +74,6 @@ async def get_filters(
         "memories": sorted([m for m in memories if m]),
         "colors": sorted([c for c in colors if c]),
         "conditions": sorted([c for c in conditions if c]),
-        "suppliers": [{"id": s.id, "name": s.display_name} for s in suppliers],
+        "suppliers": [{"id": s.id, "name": s.source_name} for s in sources],
         "currencies": ["RUB", "USD", "EUR"],
     }
