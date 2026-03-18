@@ -13,7 +13,7 @@ from app.models.source import Source
 
 logger = logging.getLogger(__name__)
 
-HISTORY_DAYS = 7  # how far back to look on first run
+HISTORY_DAYS = 7  # how far back to look (applies to EVERY run, not just first)
 
 
 async def read_channel_messages(
@@ -25,22 +25,31 @@ async def read_channel_messages(
     """
     Read new messages from a Telegram channel or group.
 
-    - First run (last_message_id is None): fetches up to `limit` messages
-      from the last HISTORY_DAYS days.
-    - Subsequent runs: fetches only messages newer than last_message_id.
+    - First run (last_message_id is None): fetches messages from the last
+      HISTORY_DAYS days only (hard cutoff enforced both via offset_date and
+      in-loop date filter).
+    - Subsequent runs: fetches only messages newer than last_message_id,
+      but still discards anything older than HISTORY_DAYS as a safety net
+      (prevents replaying old backlog if last_message_id is stale/reset).
 
     Returns the number of new messages saved.
     """
     saved_count = 0
+    skipped_old = 0
+
+    # Hard cutoff — always enforced, on every run
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=HISTORY_DAYS)
+
     try:
         entity = await client.get_entity(source.telegram_id)
 
         is_first_run = source.last_message_id is None
         min_id = source.last_message_id or 0
-        offset_date = (
-            datetime.now(timezone.utc) - timedelta(days=HISTORY_DAYS)
-            if is_first_run else None
-        )
+
+        # On first run pass offset_date so Telethon starts near the cutoff
+        # and doesn't stream thousands of old messages over the wire.
+        # On incremental runs min_id is already the right lower bound.
+        offset_date = cutoff_date if is_first_run else None
 
         messages: list[Message] = []
         async for message in client.iter_messages(
@@ -50,8 +59,22 @@ async def read_channel_messages(
             offset_date=offset_date,
             reverse=True,
         ):
-            if message.text:
-                messages.append(message)
+            if not message.text:
+                continue
+
+            # Hard date guard — drop anything older than cutoff regardless
+            # of how Telethon interpreted offset_date or min_id.
+            if message.date and message.date < cutoff_date:
+                skipped_old += 1
+                continue
+
+            messages.append(message)
+
+        if skipped_old:
+            logger.info(
+                f"[{source.source_name}] Skipped {skipped_old} messages older "
+                f"than {HISTORY_DAYS} days (cutoff: {cutoff_date.date()})"
+            )
 
         if not messages:
             logger.info(f"No new messages for source {source.source_name} (id={source.id})")
@@ -115,7 +138,7 @@ async def _get_sender_name(message: Message) -> Optional[str]:
                 parts = [sender.first_name or ""]
                 if hasattr(sender, "last_name") and sender.last_name:
                     parts.append(sender.last_name)
-                return " ".join(parts).strip() or None
+                return " \".join(parts).strip() or None
             if hasattr(sender, "title"):
                 return sender.title
     except Exception:
