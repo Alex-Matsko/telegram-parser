@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -27,6 +28,12 @@ class BotInteractionResult:
         self.steps_executed: int = 0
         self.collected_messages: list[str] = []
         self.errors: list[str] = []
+
+
+def _unique_message_id() -> int:
+    """Generate a unique positive int ID for synthetic bot messages."""
+    # Use the lower 31 bits of a UUID4 to stay within PostgreSQL int range
+    return uuid.uuid4().int & 0x7FFFFFFF
 
 
 async def execute_bot_scenario(
@@ -121,7 +128,7 @@ async def execute_bot_scenario(
     for msg_text in result.collected_messages:
         stmt = pg_insert(RawMessage).values(
             source_id=source.id,
-            telegram_message_id=int(datetime.now(timezone.utc).timestamp() * 1000000) + saved,
+            telegram_message_id=_unique_message_id(),
             message_text=msg_text,
             message_date=datetime.now(timezone.utc),
             sender_name=scenario.bot_name,
