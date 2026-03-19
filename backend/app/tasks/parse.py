@@ -60,7 +60,7 @@ async def _parse_pending_messages_async() -> dict:
     from app.models.raw_message import RawMessage
     from app.models.source import Source
 
-    stats = {"processed": 0, "parsed": 0, "failed": 0, "needs_review": 0}
+    stats = {"processed": 0, "parsed": 0, "failed": 0, "needs_review": 0, "skipped_unchanged": 0}
 
     async with get_isolated_session() as session:
         result = await session.execute(
@@ -97,15 +97,17 @@ async def _parse_pending_messages_async() -> dict:
                         f"Please link a Supplier to this Source in /api/sources."
                     )
 
-                parse_result = await _process_single_message(
+                parse_result, skipped = await _process_single_message(
                     session=session,
                     message=msg,
                     parsing_strategy=parsing_strategy,
                     supplier_id=supplier_id,
                     confidence_threshold=settings.parser_confidence_threshold,
+                    skip_unchanged=settings.skip_unchanged_prices,
                 )
 
                 stats["processed"] += 1
+                stats["skipped_unchanged"] += skipped
                 if parse_result == "parsed":
                     stats["parsed"] += 1
                 elif parse_result == "needs_review":
@@ -151,12 +153,13 @@ async def _parse_single_message_async(message_id: int) -> dict:
         parsing_strategy = source.parsing_strategy if source else "auto"
         supplier_id = source.supplier_id if source else None
 
-        status = await _process_single_message(
+        status, _ = await _process_single_message(
             session=session,
             message=message,
             parsing_strategy=parsing_strategy,
             supplier_id=supplier_id,
             confidence_threshold=settings.parser_confidence_threshold,
+            skip_unchanged=settings.skip_unchanged_prices,
         )
 
         await session.commit()
@@ -169,11 +172,13 @@ async def _process_single_message(
     parsing_strategy: str,
     supplier_id: int | None,
     confidence_threshold: float,
-) -> str:
+    skip_unchanged: bool = True,
+) -> tuple[str, int]:
     """
     Process a single raw message through the parsing pipeline.
-    Pipeline: regex → LLM fallback → normalize → create offer.
-    Returns: "parsed", "needs_review", or "failed".
+    Pipeline: regex -> LLM fallback -> normalize -> create offer.
+    Returns: (status, skipped_unchanged_count)
+    status is one of: "parsed", "needs_review", "failed".
     """
     from app.models.offer import Offer
     from app.models.price_history import PriceHistory
@@ -183,6 +188,7 @@ async def _process_single_message(
 
     text = message.message_text
     offers_created = 0
+    skipped_unchanged = 0
 
     # Step 1: Regex parser
     parsed_offers = []
@@ -212,7 +218,7 @@ async def _process_single_message(
         message.parse_status = "failed"
         message.parse_error = "No offers could be extracted from the message"
         message.is_processed = True
-        return "failed"
+        return "failed", 0
 
     # Step 4: Process each parsed offer
     any_success = False
@@ -245,7 +251,7 @@ async def _process_single_message(
             any_needs_review = True
             continue
 
-        # Mark old offers from same supplier+product as not current
+        # Find current offers from same supplier+product
         from sqlalchemy import and_, select
         existing_result = await session.execute(
             select(Offer).where(
@@ -256,7 +262,25 @@ async def _process_single_message(
                 )
             )
         )
-        for old_offer in existing_result.scalars().all():
+        existing_offers = existing_result.scalars().all()
+
+        new_price = Decimal(str(parsed_offer.price))
+
+        # skip_unchanged_prices: if price didn't change — skip offer + history creation
+        if skip_unchanged and existing_offers:
+            current_price = existing_offers[0].price
+            if current_price == new_price:
+                logger.debug(
+                    f"Skipping unchanged price {new_price} for "
+                    f"product={product.id}, supplier={supplier_id}"
+                )
+                # Still mark message as processed so it doesn't stay pending
+                any_success = True
+                skipped_unchanged += 1
+                continue
+
+        # Price changed (or no existing offer) — mark old offers as not current
+        for old_offer in existing_offers:
             old_offer.is_current = False
 
         # Create new offer
@@ -264,7 +288,7 @@ async def _process_single_message(
             supplier_id=supplier_id,
             product_id=product.id,
             raw_message_id=message.id,
-            price=Decimal(str(parsed_offer.price)),
+            price=new_price,
             currency=parsed_offer.currency,
             detected_confidence=match_confidence,
             is_current=True,
@@ -272,12 +296,12 @@ async def _process_single_message(
         session.add(offer)
         await session.flush()
 
-        # Record price history (ТЗ 4.7 — store every change)
+        # Record price history entry
         history_entry = PriceHistory(
             offer_id=offer.id,
             supplier_id=supplier_id,
             product_id=product.id,
-            price=Decimal(str(parsed_offer.price)),
+            price=new_price,
             currency=parsed_offer.currency,
         )
         session.add(history_entry)
@@ -307,4 +331,4 @@ async def _process_single_message(
         status = "failed"
 
     await session.flush()
-    return status
+    return status, skipped_unchanged
