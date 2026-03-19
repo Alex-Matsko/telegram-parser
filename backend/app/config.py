@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     parser_confidence_threshold: float = 0.5
     skip_unchanged_prices: bool = True
 
+    # Collector: how many days back to fetch on first run (and hard cutoff on every run)
+    # Override via COLLECTOR_HISTORY_DAYS=14 in .env
+    collector_history_days: int = 7
+
     @field_validator("telegram_api_id")
     @classmethod
     def validate_telegram_api_id(cls, v: int) -> int:
