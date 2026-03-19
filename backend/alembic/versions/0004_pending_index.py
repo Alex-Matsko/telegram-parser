@@ -4,14 +4,8 @@ Revision ID: 0004_pending_index
 Revises: 0003_nullable_source_id
 Create Date: 2026-03-19
 
-This index dramatically speeds up the batch query in parse.py:
-    SELECT ... FROM raw_messages
-    WHERE parse_status = 'pending'
-    ORDER BY created_at
-    LIMIT 100
-
-The partial index (WHERE parse_status = 'pending') stays small because
-parsed/failed rows are excluded — only the active queue is indexed.
+CREATE INDEX CONCURRENTLY cannot run inside a transaction block,
+so this migration sets transaction=False.
 """
 from alembic import op
 
@@ -19,6 +13,9 @@ revision = '0004_pending_index'
 down_revision = '0003_nullable_source_id'
 branch_labels = None
 depends_on = None
+
+# Required for CREATE INDEX CONCURRENTLY
+transactional_ddl = False
 
 
 def upgrade() -> None:
