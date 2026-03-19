@@ -6,6 +6,9 @@ from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
+# Pause between sources to avoid Telegram FloodWaitError
+_INTER_SOURCE_SLEEP_SEC = 1.0
+
 
 def _run_async(coro):
     """Run an async coroutine in a fresh event loop (safe for Celery prefork)."""
@@ -58,7 +61,7 @@ def execute_all_bot_scenarios(self):
 
 
 async def _collect_from_all_sources_async() -> dict:
-    """Collect from all active sources."""
+    """Collect from all active sources with rate-limit pause between each."""
     from app.collector.channel_reader import get_active_sources, read_channel_messages
     from app.collector.telegram_client import get_telegram_client
     from app.database import get_isolated_session
@@ -70,7 +73,7 @@ async def _collect_from_all_sources_async() -> dict:
             sources = await get_active_sources(session)
             logger.info(f"Collecting from {len(sources)} active sources")
 
-            for source in sources:
+            for idx, source in enumerate(sources):
                 if source.type == "bot":
                     # Bot sources are handled by execute_all_bot_scenarios
                     continue
@@ -85,6 +88,11 @@ async def _collect_from_all_sources_async() -> dict:
                 except Exception as e:
                     logger.error(f"Error collecting from {source.source_name}: {e}")
                     stats["errors"] += 1
+
+                # Rate-limit: pause between sources to avoid FloodWaitError
+                # Skip sleep after the last source
+                if idx < len(sources) - 1:
+                    await asyncio.sleep(_INTER_SOURCE_SLEEP_SEC)
 
             await session.commit()
 
@@ -134,7 +142,6 @@ async def _execute_all_bot_scenarios_async() -> dict:
 
     async with get_telegram_client() as client:
         async with get_isolated_session() as session:
-            # Get all active bot sources with scenarios
             result = await session.execute(
                 select(Source, BotScenario)
                 .join(BotScenario, Source.bot_scenario_id == BotScenario.id)
@@ -148,7 +155,7 @@ async def _execute_all_bot_scenarios_async() -> dict:
             )
             pairs = result.all()
 
-            for source, scenario in pairs:
+            for idx, (source, scenario) in enumerate(pairs):
                 try:
                     interaction = await execute_bot_scenario(
                         client=client,
@@ -165,6 +172,9 @@ async def _execute_all_bot_scenarios_async() -> dict:
                         f"Error executing scenario {scenario.scenario_name}: {e}"
                     )
                     stats["errors"] += 1
+
+                if idx < len(pairs) - 1:
+                    await asyncio.sleep(_INTER_SOURCE_SLEEP_SEC)
 
             await session.commit()
 
