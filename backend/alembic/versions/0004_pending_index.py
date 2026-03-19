@@ -4,8 +4,10 @@ Revision ID: 0004_pending_index
 Revises: 0003_nullable_source_id
 Create Date: 2026-03-19
 
-CREATE INDEX CONCURRENTLY cannot run inside a transaction block,
-so this migration sets transaction=False.
+Note: CONCURRENTLY is not used here because Alembic runs migrations
+inside a transaction block (asyncpg does not support CONCURRENTLY
+inside transactions). The table is small at migration time so a regular
+CREATE INDEX is safe and fast.
 """
 from alembic import op
 
@@ -14,17 +16,14 @@ down_revision = '0003_nullable_source_id'
 branch_labels = None
 depends_on = None
 
-# Required for CREATE INDEX CONCURRENTLY
-transactional_ddl = False
-
 
 def upgrade() -> None:
     op.execute("""
-        CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_raw_messages_pending
+        CREATE INDEX IF NOT EXISTS idx_raw_messages_pending
         ON raw_messages (parse_status, created_at)
         WHERE parse_status = 'pending'
     """)
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_raw_messages_pending")
+    op.execute("DROP INDEX IF EXISTS idx_raw_messages_pending")
