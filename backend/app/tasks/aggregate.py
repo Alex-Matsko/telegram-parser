@@ -36,19 +36,20 @@ def refresh_price_list(self):
 
 
 async def _refresh_price_list_async() -> dict:
-    """Perform price list refresh operations."""
+    """Perform price list refresh operations inside a single transaction."""
     from sqlalchemy import and_, func, select, update
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     from app.database import get_isolated_session
     from app.models.offer import Offer
 
-    stats = {"stale_marked": 0}
+    stats = {"stale_marked": 0, "deduped": 0}
 
     async with get_isolated_session() as session:
-        # Mark offers older than 3 days as not current
+        # --- Step 1: mark stale offers as not current ---
         stale_cutoff = datetime.now(timezone.utc) - timedelta(days=3)
 
-        result = await session.execute(
+        stale_result = await session.execute(
             update(Offer)
             .where(
                 and_(
@@ -57,11 +58,11 @@ async def _refresh_price_list_async() -> dict:
                 )
             )
             .values(is_current=False)
+            .execution_options(synchronize_session="fetch")
         )
-        stats["stale_marked"] = result.rowcount
+        stats["stale_marked"] = stale_result.rowcount
 
-        # For products with multiple current offers from same supplier,
-        # keep only the most recent one
+        # --- Step 2: find product+supplier pairs with multiple current offers ---
         dupe_subq = (
             select(
                 Offer.product_id,
@@ -74,12 +75,16 @@ async def _refresh_price_list_async() -> dict:
             .subquery()
         )
 
-        dupe_pairs = (await session.execute(
-            select(dupe_subq.c.product_id, dupe_subq.c.supplier_id)
-        )).all()
+        dupe_pairs = (
+            await session.execute(
+                select(dupe_subq.c.product_id, dupe_subq.c.supplier_id)
+            )
+        ).all()
 
         deduped = 0
         for product_id, supplier_id in dupe_pairs:
+            # SELECT FOR UPDATE locks these rows so concurrent parse.py writes
+            # cannot insert a new is_current=True offer between our read and write
             offers_result = await session.execute(
                 select(Offer)
                 .where(
@@ -90,10 +95,11 @@ async def _refresh_price_list_async() -> dict:
                     )
                 )
                 .order_by(Offer.updated_at.desc())
+                .with_for_update()
             )
             offers = offers_result.scalars().all()
 
-            # Mark all but the newest as not current
+            # Keep only the most recent; mark the rest as not current
             for offer in offers[1:]:
                 offer.is_current = False
                 deduped += 1
