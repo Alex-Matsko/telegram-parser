@@ -85,24 +85,16 @@ _MEMORY_PATTERN = re.compile(
 )
 
 # ---- Expanded model aliases for PM/P abbreviations ----
-# These are patterns tried BEFORE the dictionary lookup for common abbreviations
 _SHORTHAND_MODEL_PATTERNS: list[tuple[re.Pattern, tuple[str, str, str]]] = [
-    # "15 PM" / "15PM" / "15 pm" -> iPhone 15 Pro Max
-    (re.compile(r'(?:iphone\s*)?(\d{2})\s*pm\b', re.IGNORECASE),
-     None),  # resolved dynamically
-    # "15 P" / "15P" (but not "15 Pro" which is handled by dict)
-    (re.compile(r'(?:iphone\s*)?(\d{2})\s*p\b(?!\s*r)', re.IGNORECASE),
-     None),  # resolved dynamically
+    (re.compile(r'(?:iphone\s*)?(\d{2})\s*pm\b', re.IGNORECASE), None),
+    (re.compile(r'(?:iphone\s*)?(\d{2})\s*p\b(?!\s*r)', re.IGNORECASE), None),
 ]
 
 
 def _resolve_shorthand_model(match: re.Match, is_pm: bool) -> Optional[tuple[str, str, str]]:
     """Resolve a PM/P shorthand match to a model tuple."""
     gen = match.group(1)
-    if is_pm:
-        key = f"{gen}pm"
-    else:
-        key = f"{gen}p"
+    key = f"{gen}pm" if is_pm else f"{gen}p"
     return MODEL_ALIASES.get(key)
 
 
@@ -112,9 +104,7 @@ _SORTED_MODEL_KEYS = sorted(MODEL_ALIASES.keys(), key=len, reverse=True)
 _MODEL_PATTERNS: list[tuple[re.Pattern, str]] = []
 for _key in _SORTED_MODEL_KEYS:
     _escaped = re.escape(_key)
-    # Allow flexible separators between words
     _flexible = _escaped.replace(r'\ ', r'[\s/\-]*')
-    # Use lookahead/lookbehind that allow digits at boundaries (for "15 Pro Max")
     _MODEL_PATTERNS.append((
         re.compile(r'(?:^|(?<=\s)|(?<=[/\-]))' + _flexible + r'(?=\s|[/\-]|$)', re.IGNORECASE),
         _key,
@@ -157,20 +147,38 @@ def _split_into_lines(text: str) -> list[str]:
 
 
 def _is_noise_line(line: str) -> bool:
-    """Check if a line is a header, separator, or noise."""
+    """Check if a line is a header, separator, URL, phone number, or noise."""
     stripped = line.strip().lower()
+
+    # Separator lines
     if re.fullmatch(r'[-=_*~.]{3,}', stripped):
         return True
+
+    # Too short with no digits
     if len(stripped) < 5 and not any(c.isdigit() for c in stripped):
         return True
+
+    # URLs — always noise, no price data
+    if re.search(r'https?://', stripped):
+        return True
+
+    # Phone numbers — 7-digit strings that would match price patterns
+    if re.search(r'\+7[\s\-]?\(?\d{3}\)?', stripped):
+        return True
+    if re.search(r'\b8[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}', stripped):
+        return True
+
+    # Known header/noise keywords
     noise_starts = [
         "прайс", "price list", "обновлен", "updated", "дата",
         "актуальный", "актуально", "на ", "от ", "#", "📱", "🔥",
         "⬇️", "👇", "доставка", "оплата", "гарантия", "warranty",
+        "контакты", "цены в канале", "t.me",
     ]
     for ns in noise_starts:
         if stripped.startswith(ns):
             return True
+
     return False
 
 
@@ -185,7 +193,6 @@ def _parse_single_line(line: str) -> Optional[ParsedOffer]:
     if model_info:
         offer.line, offer.model, offer.category = model_info
         offer.confidence += 0.4
-        # Remove model text to avoid number confusion
         if model_span:
             remaining = text[:model_span[0]] + " " + text[model_span[1]:]
 
@@ -195,7 +202,7 @@ def _parse_single_line(line: str) -> Optional[ParsedOffer]:
         offer.price = price_val
         offer.currency = currency
 
-    # 3. Extract memory from remaining text (also check original for context)
+    # 3. Extract memory
     memory = _extract_memory(remaining)
     if memory:
         offer.memory = memory
@@ -221,7 +228,6 @@ def _parse_single_line(line: str) -> Optional[ParsedOffer]:
     if offer.price is not None:
         offer.confidence += 0.3
 
-    # Clamp confidence
     offer.confidence = min(offer.confidence, 1.0)
 
     # If no model was found, try to infer from shorthand like "16/256"
@@ -243,7 +249,6 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
     best_currency = "RUB"
     best_span: Optional[tuple[int, int]] = None
 
-    # Try pattern 1: number followed by currency
     pat = _PRICE_PATTERNS[0]
     for m in pat.finditer(text):
         num_str = m.group(1).replace(" ", "")
@@ -257,7 +262,6 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
         best_currency = currency
         best_span = (m.start(), m.end())
 
-    # Try pattern 2: currency before number
     if best_price is None:
         pat = _PRICE_PATTERNS[1]
         for m in pat.finditer(text):
@@ -272,7 +276,6 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
             best_currency = currency
             best_span = (m.start(), m.end())
 
-    # Try pattern 3: spaced number like "91 500"
     if best_price is None:
         pat = _PRICE_PATTERNS[2]
         for m in pat.finditer(text):
@@ -286,7 +289,6 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
                 best_currency = "RUB"
                 best_span = (m.start(), m.end())
 
-    # Try pattern 4: standalone large number at end
     if best_price is None:
         pat = _PRICE_PATTERNS[3]
         for m in pat.finditer(text):
@@ -312,29 +314,24 @@ def _resolve_currency(s: str) -> str:
 def _extract_model_with_span(text: str) -> tuple[Optional[tuple[str, str, str]], Optional[tuple[int, int]]]:
     """
     Extract product model from text, returning result and span.
-    Tries PM/P shorthands first, then dictionary patterns.
     Returns ((line, model, category), (start, end)) or (None, None).
     """
     lower = text.lower()
-    # Normalize separators for matching
-    normalized = re.sub(r'[/\-|•·]', ' ', lower)
+    normalized = re.sub(r'[/\-|\u2022\u00b7]', ' ', lower)
     normalized = re.sub(r'\s+', ' ', normalized).strip()
 
-    # Try PM shorthand first: "15 PM", "15PM", "iPhone 15 PM"
     pm_match = re.search(r'(?:iphone\s*)?(\d{2})\s*pm\b', normalized, re.IGNORECASE)
     if pm_match:
         result = _resolve_shorthand_model(pm_match, is_pm=True)
         if result:
             return result, pm_match.span()
 
-    # Try P shorthand: "15 P" / "15P" (but not "15 Pro", "15 Plus")
     p_match = re.search(r'(?:iphone\s*)?(\d{2})\s*p\b(?!\s*(?:r|l|h))', normalized, re.IGNORECASE)
     if p_match:
         result = _resolve_shorthand_model(p_match, is_pm=False)
         if result:
             return result, p_match.span()
 
-    # Try dictionary patterns (longest-first)
     for pattern, key in _MODEL_PATTERNS:
         m = pattern.search(normalized)
         if m:
@@ -354,13 +351,9 @@ def _extract_model(text: str) -> Optional[tuple[str, str, str]]:
 
 def _extract_memory(text: str) -> Optional[str]:
     """Extract memory/storage specification."""
-    # Find all potential memory values
     matches = list(_MEMORY_PATTERN.finditer(text))
     if not matches:
         return None
-
-    # If multiple matches, prefer the one that looks like storage (not a screen size)
-    # Screen sizes are typically: 11, 13, 14, 15, 16 (but these won't match our pattern since min is 32)
     for m in matches:
         if m.group(1):
             raw = m.group(1)
@@ -373,12 +366,10 @@ def _extract_memory(text: str) -> Optional[str]:
 def _extract_color(text: str) -> Optional[str]:
     """Extract color from text."""
     lower = text.lower()
-    # Remove numbers and common separators, normalize spaces
     color_text = re.sub(r'\d+', ' ', lower)
-    color_text = re.sub(r'[/\-|•·]', ' ', color_text)
+    color_text = re.sub(r'[/\-|\u2022\u00b7]', ' ', color_text)
     color_text = re.sub(r'\s+', ' ', color_text).strip()
 
-    # Try longest aliases first
     sorted_colors = sorted(COLOR_ALIASES.keys(), key=len, reverse=True)
     for alias in sorted_colors:
         pattern = r'(?:^|(?<=\s))' + re.escape(alias) + r'(?=\s|$)'
@@ -409,9 +400,7 @@ def _extract_sim_type(text: str) -> Optional[str]:
 
 
 def _infer_model_from_shorthand(text: str) -> Optional[tuple[str, str, str]]:
-    """
-    Try to infer model from shorthand like "16/256" or "16 256".
-    """
+    """Try to infer model from shorthand like '16/256' or '16 256'."""
     patterns = [
         re.compile(r'(?<!\d)(1[2-6])\s*[/\-]\s*(64|128|256|512|1024)', re.IGNORECASE),
         re.compile(r'(?<!\d)(1[2-6])\s+(64|128|256|512|1024)', re.IGNORECASE),
