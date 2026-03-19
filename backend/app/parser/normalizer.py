@@ -17,6 +17,10 @@ from app.parser.regex_parser import ParsedOffer
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of catalog entries loaded into memory for fuzzy matching.
+# Prevents OOM as the product catalog grows.
+_FUZZY_CANDIDATE_LIMIT = 500
+
 
 def build_sku_key(
     category: str,
@@ -101,7 +105,7 @@ async def normalize_and_match(
         logger.debug(f"Exact SKU match: {sku_key}")
         return existing, 1.0
 
-    # 2. Try fuzzy match against existing products
+    # 2. Try fuzzy match against existing products (capped at _FUZZY_CANDIDATE_LIMIT)
     fuzzy_match, fuzzy_score = await _fuzzy_match_product(offer, session)
     if fuzzy_match and fuzzy_score >= 90:
         logger.debug(
@@ -149,9 +153,9 @@ async def _fuzzy_match_product(
 ) -> tuple[Optional[ProductCatalog], int]:
     """
     Fuzzy match a parsed offer against existing products.
+    Loads at most _FUZZY_CANDIDATE_LIMIT rows to prevent memory issues.
     Returns (best_match, score) where score is 0-100.
     """
-    # Build a search string from the offer
     search_parts = [offer.model or ""]
     if offer.memory:
         search_parts.append(offer.memory)
@@ -159,10 +163,15 @@ async def _fuzzy_match_product(
         search_parts.append(offer.color)
     search_str = " ".join(search_parts).lower()
 
-    # Query candidate products (same brand, similar model)
-    stmt = select(ProductCatalog).where(ProductCatalog.brand == offer.brand)
+    # Query candidates: same brand + category, limited to avoid OOM
+    stmt = (
+        select(ProductCatalog)
+        .where(ProductCatalog.brand == offer.brand)
+        .limit(_FUZZY_CANDIDATE_LIMIT)
+    )
     if offer.category:
         stmt = stmt.where(ProductCatalog.category == offer.category)
+
     result = await session.execute(stmt)
     candidates = result.scalars().all()
 
@@ -176,15 +185,12 @@ async def _fuzzy_match_product(
         candidate_str = product.normalized_name.lower()
         score = fuzz.token_sort_ratio(search_str, candidate_str)
 
-        # Bonus for exact model match
         if offer.model and product.model and offer.model.lower() == product.model.lower():
             score = min(score + 20, 100)
 
-        # Bonus for memory match
         if offer.memory and product.memory and offer.memory == product.memory:
             score = min(score + 10, 100)
 
-        # Penalty for condition mismatch
         if offer.condition != product.condition:
             score = max(score - 15, 0)
 
