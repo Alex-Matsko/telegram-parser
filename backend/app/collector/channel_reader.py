@@ -8,12 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import TelegramClient
 from telethon.tl.types import Message
 
+from app.config import settings
 from app.models.raw_message import RawMessage
 from app.models.source import Source
 
 logger = logging.getLogger(__name__)
-
-HISTORY_DAYS = 7  # how far back to look (applies to EVERY run, not just first)
 
 
 async def read_channel_messages(
@@ -26,19 +25,20 @@ async def read_channel_messages(
     Read new messages from a Telegram channel or group.
 
     - First run (last_message_id is None): fetches messages from the last
-      HISTORY_DAYS days only (hard cutoff enforced both via offset_date and
-      in-loop date filter).
+      settings.collector_history_days days only (hard cutoff enforced both
+      via offset_date and in-loop date filter).
     - Subsequent runs: fetches only messages newer than last_message_id,
-      but still discards anything older than HISTORY_DAYS as a safety net
-      (prevents replaying old backlog if last_message_id is stale/reset).
+      but still discards anything older than collector_history_days as a
+      safety net (prevents replaying old backlog if last_message_id is reset).
 
     Returns the number of new messages saved.
     """
     saved_count = 0
     skipped_old = 0
 
-    # Hard cutoff — always enforced, on every run
-    cutoff_date = datetime.now(timezone.utc) - timedelta(days=HISTORY_DAYS)
+    # Hard cutoff — read from settings, configurable via COLLECTOR_HISTORY_DAYS in .env
+    history_days = settings.collector_history_days
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=history_days)
 
     try:
         entity = await client.get_entity(source.telegram_id)
@@ -73,7 +73,7 @@ async def read_channel_messages(
         if skipped_old:
             logger.info(
                 f"[{source.source_name}] Skipped {skipped_old} messages older "
-                f"than {HISTORY_DAYS} days (cutoff: {cutoff_date.date()})"
+                f"than {history_days} days (cutoff: {cutoff_date.date()})"
             )
 
         if not messages:
