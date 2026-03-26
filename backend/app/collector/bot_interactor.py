@@ -31,8 +31,6 @@ class BotInteractionResult:
 
 
 def _unique_message_id() -> int:
-    """Generate a unique positive int ID for synthetic bot messages."""
-    # Use the lower 31 bits of a UUID4 to stay within PostgreSQL int range
     return uuid.uuid4().int & 0x7FFFFFFF
 
 
@@ -48,17 +46,38 @@ async def execute_bot_scenario(
     """
     result = BotInteractionResult()
     steps = scenario.steps_json
+    total_steps = len(steps) if steps else 0
+
+    logger.info(
+        f"[BOT:{source.source_name}] ▶ START scenario='{scenario.scenario_name}' | "
+        f"source_id={source.id} | telegram_id={source.telegram_id} | "
+        f"total_steps={total_steps}"
+    )
 
     if not steps:
+        msg = "Scenario has no steps"
+        logger.error(f"[BOT:{source.source_name}] ❌ {msg}")
         result.success = False
-        result.errors.append("Scenario has no steps")
+        result.errors.append(msg)
         return result
 
     try:
+        logger.debug(
+            f"[BOT:{source.source_name}] Resolving entity telegram_id={source.telegram_id} ..."
+        )
         entity = await client.get_entity(source.telegram_id)
+        logger.info(
+            f"[BOT:{source.source_name}] ✔ Entity resolved: "
+            f"type={type(entity).__name__} | id={getattr(entity, 'id', '?')}"
+        )
     except Exception as e:
+        msg = f"Failed to get bot entity: {e}"
+        logger.error(
+            f"[BOT:{source.source_name}] ❌ {msg}",
+            exc_info=True,
+        )
         result.success = False
-        result.errors.append(f"Failed to get bot entity: {e}")
+        result.errors.append(msg)
         return result
 
     last_bot_message: Optional[Message] = None
@@ -67,25 +86,58 @@ async def execute_bot_scenario(
         action = step.get("action", "")
         value = step.get("value", "")
         wait_sec = step.get("wait_sec", 2)
+        step_label = f"Step [{i + 1}/{total_steps}] action='{action}'"
+
+        logger.info(
+            f"[BOT:{source.source_name}] {step_label} "
+            f"value={value!r} wait_sec={wait_sec}"
+        )
 
         try:
-            if action == "send_command" or action == "send_text":
+            if action in ("send_command", "send_text"):
+                logger.debug(
+                    f"[BOT:{source.source_name}] {step_label} → Sending message: {value!r}"
+                )
                 await client.send_message(entity, value)
+                logger.debug(
+                    f"[BOT:{source.source_name}] {step_label} ⏳ Waiting {wait_sec}s for response ..."
+                )
                 await asyncio.sleep(wait_sec)
                 last_bot_message = await _get_last_bot_message(client, entity)
+                if last_bot_message:
+                    logger.debug(
+                        f"[BOT:{source.source_name}] {step_label} ✔ Bot replied: "
+                        f"msg_id={last_bot_message.id} | "
+                        f"preview={last_bot_message.text[:80]!r}"
+                    )
+                else:
+                    logger.warning(
+                        f"[BOT:{source.source_name}] {step_label} ⚠ No bot reply found after waiting"
+                    )
 
             elif action == "click_inline":
                 if last_bot_message is None:
+                    logger.debug(
+                        f"[BOT:{source.source_name}] {step_label} Fetching last bot message ..."
+                    )
                     last_bot_message = await _get_last_bot_message(client, entity)
                 if last_bot_message is None:
-                    result.errors.append(f"Step {i}: No message with inline buttons found")
+                    err = f"{step_label}: No message with inline buttons found"
+                    logger.warning(f"[BOT:{source.source_name}] ⚠ {err}")
+                    result.errors.append(err)
                     continue
+                logger.debug(
+                    f"[BOT:{source.source_name}] {step_label} → Clicking inline button: {value!r}"
+                )
                 clicked = await _click_inline_button(client, last_bot_message, value)
                 if not clicked:
-                    result.errors.append(
-                        f"Step {i}: Inline button '{value}' not found"
-                    )
+                    err = f"{step_label}: Inline button '{value}' not found"
+                    logger.warning(f"[BOT:{source.source_name}] ⚠ {err}")
+                    result.errors.append(err)
                     continue
+                logger.debug(
+                    f"[BOT:{source.source_name}] {step_label} ✔ Clicked. Waiting {wait_sec}s ..."
+                )
                 await asyncio.sleep(wait_sec)
                 last_bot_message = await _get_last_bot_message(client, entity)
 
@@ -93,38 +145,71 @@ async def execute_bot_scenario(
                 if last_bot_message is None:
                     last_bot_message = await _get_last_bot_message(client, entity)
                 if last_bot_message is None:
-                    result.errors.append(f"Step {i}: No message with reply keyboard found")
+                    err = f"{step_label}: No message with reply keyboard found"
+                    logger.warning(f"[BOT:{source.source_name}] ⚠ {err}")
+                    result.errors.append(err)
                     continue
+                logger.debug(
+                    f"[BOT:{source.source_name}] {step_label} → Clicking reply button: {value!r}"
+                )
                 clicked = await _click_reply_button(client, entity, last_bot_message, value)
                 if not clicked:
-                    result.errors.append(
-                        f"Step {i}: Reply button '{value}' not found"
-                    )
+                    err = f"{step_label}: Reply button '{value}' not found"
+                    logger.warning(f"[BOT:{source.source_name}] ⚠ {err}")
+                    result.errors.append(err)
                     continue
+                logger.debug(
+                    f"[BOT:{source.source_name}] {step_label} ✔ Clicked. Waiting {wait_sec}s ..."
+                )
                 await asyncio.sleep(wait_sec)
                 last_bot_message = await _get_last_bot_message(client, entity)
 
             elif action == "collect_response":
+                logger.debug(
+                    f"[BOT:{source.source_name}] {step_label} Collecting recent messages (limit=10) ..."
+                )
                 messages = await _collect_recent_messages(client, entity, limit=10)
+                before = len(result.collected_messages)
                 for msg in messages:
                     if msg.text:
                         result.collected_messages.append(msg.text)
+                after = len(result.collected_messages)
+                logger.info(
+                    f"[BOT:{source.source_name}] {step_label} ✔ Collected {after - before} messages "
+                    f"(total so far: {after})"
+                )
 
             elif action == "wait":
+                logger.debug(
+                    f"[BOT:{source.source_name}] {step_label} ⏳ Explicit wait {wait_sec}s"
+                )
                 await asyncio.sleep(wait_sec)
 
             else:
-                result.errors.append(f"Step {i}: Unknown action '{action}'")
+                err = f"{step_label}: Unknown action '{action}'"
+                logger.warning(f"[BOT:{source.source_name}] ⚠ {err}")
+                result.errors.append(err)
                 continue
 
             result.steps_executed += 1
+            logger.debug(
+                f"[BOT:{source.source_name}] {step_label} ✅ Complete"
+            )
 
         except Exception as e:
-            result.errors.append(f"Step {i} ({action}): {e}")
-            logger.error(f"Bot scenario step {i} failed: {e}")
+            err = f"{step_label} ({action}): {e}"
+            result.errors.append(err)
+            logger.error(
+                f"[BOT:{source.source_name}] ❌ {err}",
+                exc_info=True,
+            )
 
     # Save collected messages as raw messages
     saved = 0
+    logger.info(
+        f"[BOT:{source.source_name}] Saving {len(result.collected_messages)} "
+        f"collected messages to DB ..."
+    )
     for msg_text in result.collected_messages:
         stmt = pg_insert(RawMessage).values(
             source_id=source.id,
@@ -144,10 +229,19 @@ async def execute_bot_scenario(
 
     if result.errors:
         result.success = len(result.collected_messages) > 0
+        logger.warning(
+            f"[BOT:{source.source_name}] Scenario finished WITH ERRORS: "
+            f"{result.errors}"
+        )
+    else:
+        result.success = True
 
     logger.info(
-        f"Bot scenario '{scenario.scenario_name}' completed: "
-        f"{result.steps_executed} steps, {len(result.collected_messages)} messages collected"
+        f"[BOT:{source.source_name}] ✅ DONE scenario='{scenario.scenario_name}' | "
+        f"steps_executed={result.steps_executed}/{total_steps} | "
+        f"messages_collected={len(result.collected_messages)} | "
+        f"saved_to_db={saved} | "
+        f"errors={len(result.errors)}"
     )
     return result
 
@@ -155,7 +249,6 @@ async def execute_bot_scenario(
 async def _get_last_bot_message(
     client: TelegramClient, entity: object, limit: int = 5
 ) -> Optional[Message]:
-    """Get the most recent message from the bot in the conversation."""
     async for msg in client.iter_messages(entity, limit=limit):
         if msg.out is False and msg.text:
             return msg
@@ -165,7 +258,6 @@ async def _get_last_bot_message(
 async def _click_inline_button(
     client: TelegramClient, message: Message, button_text: str
 ) -> bool:
-    """Click an inline button by its text label."""
     if not message.reply_markup or not isinstance(message.reply_markup, ReplyInlineMarkup):
         return False
 
@@ -188,7 +280,6 @@ async def _click_reply_button(
     message: Message,
     button_text: str,
 ) -> bool:
-    """Click a reply keyboard button by sending its text."""
     if not message.reply_markup or not isinstance(message.reply_markup, ReplyKeyboardMarkup):
         return False
 
@@ -205,7 +296,6 @@ async def _click_reply_button(
 async def _collect_recent_messages(
     client: TelegramClient, entity: object, limit: int = 10
 ) -> list[Message]:
-    """Collect recent messages from bot."""
     messages = []
     async for msg in client.iter_messages(entity, limit=limit):
         if msg.out is False and msg.text:
