@@ -54,23 +54,12 @@ class ParseResult:
 # ---------------------------------------------------------------------------
 
 def _normalize_price_str(s: str) -> str:
-    """
-    Normalize price string to plain integer string.
-    Handles:
-      - dot-as-thousands-separator: "62.000" -> "62000"
-      - space-as-thousands-separator: "62 000" -> "62000"
-      - trailing asterisk/garbage: "96.500*" -> "96500"
-    """
-    # Strip trailing non-digit chars (*, ’, etc.)
     s = re.sub(r'[^\d.,]', '', s)
-    # If dot is used as thousands separator: N.NNN or N.NNN.NNN
     if re.match(r'^\d{1,3}(?:\.\d{3})+$', s):
         s = s.replace('.', '')
-    # If comma is thousands separator: N,NNN
     elif re.match(r'^\d{1,3}(?:,\d{3})+$', s):
         s = s.replace(',', '')
     else:
-        # Remove any remaining separators
         s = s.replace('.', '').replace(',', '')
     return s
 
@@ -79,47 +68,40 @@ def _normalize_price_str(s: str) -> str:
 # Price patterns (priority order)
 # ---------------------------------------------------------------------------
 
-# 1. Dash/em-dash separator: " - 94500" / " - 96.500*" / " — 915 usd"
 _PRICE_AFTER_DASH = re.compile(
     r'(?:^|\s)[—\-]\s*'
     r'(\d{1,3}(?:[.,]\d{3})*(?:\s\d{3})*\d*)'
-    r'\*?'                          # optional trailing asterisk
+    r'\*?'
     r'\s*(\$|€|₽|usd|eur|rub|руб|долл)?'
     r'(?=[^\d]|$)',
     re.IGNORECASE | re.UNICODE,
 )
 
-# 2. Explicit currency after: 915$, 920 usd
 _PRICE_EXPLICIT_AFTER = re.compile(
     r'(?<!\d)(\d{1,3}(?:[.,]\d{3})*|\d{4,7})\s*(\$|€|₽|usd|eur|rub|руб|долл)(?:\b|$)',
     re.IGNORECASE,
 )
 
-# 3. Explicit currency before: $915
 _PRICE_EXPLICIT_BEFORE = re.compile(
     r'(\$|€|₽)\s*(\d{1,3}(?:[.,]\d{3})*|\d{4,7})',
     re.IGNORECASE,
 )
 
-# 4. Spaced thousands: "91 500"
 _PRICE_SPACED = re.compile(
     r'(?<!\d)(\d{2,3}\s\d{3})(?:\b|$)',
 )
 
-# Memory pattern
 _MEMORY_PATTERN = re.compile(
     r'(?<![.\d])\b(32|64|128|256|512|1024)\s*(?:gb|гб)?\b(?!\s*(?:\$|€|₽|usd|eur|rub|руб))'
     r'|(1|2)\s*(?:tb|тб)',
     re.IGNORECASE,
 )
 
-# RAM/Storage ratio pattern (e.g. 12/256, 8/128, 16/1TB) — exclude from price
 _RAM_STORAGE_PATTERN = re.compile(
     r'\b\d{1,3}/(?:1tb|2tb|\d{2,4})\b',
     re.IGNORECASE,
 )
 
-# Pre-compile model patterns (longest-first)
 _SORTED_MODEL_KEYS = sorted(MODEL_ALIASES.keys(), key=len, reverse=True)
 _MODEL_PATTERNS: list[tuple[re.Pattern, str]] = []
 for _key in _SORTED_MODEL_KEYS:
@@ -135,12 +117,12 @@ for _key in _SORTED_MODEL_KEYS:
 # Noise line patterns
 # ---------------------------------------------------------------------------
 _NOISE_PATTERNS = [
-    re.compile(r'^[-=_*~.]{3,}$'),                          # separators
-    re.compile(r'^[*_]{1,3}[^*_].{0,80}[*_]{1,3}\s*$'),    # **header**
-    re.compile(r'https?://', re.IGNORECASE),                 # URLs
-    re.compile(r'\+7[\s\-]?\(?\d{3}\)?'),                    # phone RU
-    re.compile(r'\b8[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}'),       # phone RU alt
-    re.compile(                                              # bot button lines
+    re.compile(r'^[-=_*~.]{3,}$'),
+    re.compile(r'^[*_]{1,3}[^*_].{0,80}[*_]{1,3}\s*$'),
+    re.compile(r'https?://', re.IGNORECASE),
+    re.compile(r'\+7[\s\-]?\(?\d{3}\)?'),
+    re.compile(r'\b8[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}'),
+    re.compile(
         r'(?:нажмите|кнопку|прайс открыт|прайс закрыт)',
         re.IGNORECASE,
     ),
@@ -153,11 +135,57 @@ _NOISE_STARTS = [
     "warranty", "контакты", "цены в канале", "t.me",
 ]
 
-# Chat-like messages: short lines without product keywords
 _CHAT_KEYWORDS = [
     "привет", "даров", "как дают", "как пишут", "да?", "есть?",
     "hello", "hi ", "hey ", "thanks", "спасиб", "бро",
 ]
+
+# Patterns that signal a real price message (at least one must match)
+_PRICE_SIGNAL = re.compile(
+    r'\d{4,7}'                               # bare number ≥4 digits (price range)
+    r'|\d{2,3}[.,]\d{3}'                     # 96.500 / 96,500
+    r'|\d{2,3}\s\d{3}'                       # 91 500
+    r'|\$|€|₽|\busd\b|\beur\b|\bруб\b',
+    re.IGNORECASE,
+)
+
+# System / bot messages that should never reach LLM
+_SYSTEM_MESSAGE_PATTERNS = re.compile(
+    r'^(?:прайс|price)\s*[!.]?$'
+    r'|прайс\s+(?:открыт|закрыт)'
+    r'|нажмите\s+кнопку'
+    r'|кнопку\s+.{0,30}чтобы'
+    r'|возвращайтесь\s+завтра'
+    r'|список\s+товаров'
+    r'|показать\s+товары'
+    r'|обновить\s+список',
+    re.IGNORECASE | re.UNICODE,
+)
+
+
+def is_obviously_not_price_message(text: str) -> bool:
+    """
+    Быстрый pre-filter перед regex и LLM.
+    Возвращает True если сообщение точно не содержит товарных позиций.
+    """
+    if not text or not text.strip():
+        return True
+
+    stripped = text.strip()
+
+    # Системные сообщения бота (Прайс, Прайс открыт!, Нажмите кнопку...)
+    if _SYSTEM_MESSAGE_PATTERNS.search(stripped):
+        return True
+
+    # Слишком короткое сообщение без цифр
+    if len(stripped) < 6 and not any(c.isdigit() for c in stripped):
+        return True
+
+    # Нет ни одного признака цены
+    if not _PRICE_SIGNAL.search(stripped):
+        return True
+
+    return False
 
 
 def parse_message(text: str) -> ParseResult:
@@ -191,21 +219,17 @@ def _is_noise_line(line: str) -> bool:
     stripped = line.strip()
     lower = stripped.lower()
 
-    # Compiled noise patterns
     for pat in _NOISE_PATTERNS:
         if pat.search(stripped):
             return True
 
-    # Lines with zero digits are almost certainly not price offers
     if not any(c.isdigit() for c in stripped):
         return True
 
-    # Known noise prefixes
     for ns in _NOISE_STARTS:
         if lower.startswith(ns):
             return True
 
-    # Chat-like content in short lines
     if len(stripped) < 60:
         for kw in _CHAT_KEYWORDS:
             if kw in lower:
@@ -227,7 +251,6 @@ def _parse_single_line(line: str) -> Optional[ParsedOffer]:
         if model_span:
             remaining = text[:model_span[0]] + " " + text[model_span[1]:]
 
-    # Price from full line (to capture " - price" at end)
     price_val, currency, _ = _extract_price(text)
     if price_val is not None:
         offer.price = price_val
@@ -274,7 +297,6 @@ def _resolve_brand(line: Optional[str]) -> str:
 
 
 def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int, int]]]:
-    # Collect numbers to exclude (memory/RAM sizes)
     excluded: set[str] = set()
     for m in _MEMORY_PATTERN.finditer(text):
         excluded.add(re.sub(r'[^\d]', '', m.group(0)))
@@ -295,25 +317,21 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
         currency = _resolve_currency(curr_raw) if curr_raw else "RUB"
         return val, currency
 
-    # Priority 1: dash separator
     for m in _PRICE_AFTER_DASH.finditer(text):
         result = _try_parse(m.group(1), (m.group(2) or "").lower())
         if result:
             return result[0], result[1], (m.start(), m.end())
 
-    # Priority 2: explicit currency after
     for m in _PRICE_EXPLICIT_AFTER.finditer(text):
         result = _try_parse(m.group(1), m.group(2).lower())
         if result:
             return result[0], result[1], (m.start(), m.end())
 
-    # Priority 3: explicit currency before
     for m in _PRICE_EXPLICIT_BEFORE.finditer(text):
         result = _try_parse(m.group(2), m.group(1).lower())
         if result:
             return result[0], result[1], (m.start(), m.end())
 
-    # Priority 4: spaced thousands
     for m in _PRICE_SPACED.finditer(text):
         result = _try_parse(m.group(1), "")
         if result and result[0] >= 1000:
@@ -331,7 +349,6 @@ def _extract_model_with_span(text: str) -> tuple[Optional[tuple[str, str, str]],
     normalized = re.sub(r'[/\-|•·]', ' ', lower)
     normalized = re.sub(r'\s+', ' ', normalized).strip()
 
-    # iPhone PM/P shorthands
     pm_match = re.search(r'(?:iphone\s*)?(\d{2})\s*pm\b', normalized, re.IGNORECASE)
     if pm_match:
         result = MODEL_ALIASES.get(f"{pm_match.group(1)}pm")

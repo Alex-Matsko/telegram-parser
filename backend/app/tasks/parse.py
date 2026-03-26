@@ -1,7 +1,6 @@
 """Parsing tasks: process raw messages into structured offers."""
 import asyncio
 import logging
-from datetime import datetime, timezone
 from decimal import Decimal
 
 from app.tasks.celery_app import celery_app
@@ -60,7 +59,11 @@ async def _parse_pending_messages_async() -> dict:
     from app.models.source import Source
     from app.services.supplier_service import get_or_create_supplier_for_source
 
-    stats = {"processed": 0, "parsed": 0, "failed": 0, "needs_review": 0, "skipped_unchanged": 0, "llm_calls": 0}
+    stats = {
+        "processed": 0, "parsed": 0, "failed": 0,
+        "needs_review": 0, "skipped_unchanged": 0,
+        "llm_calls": 0, "system_skipped": 0,
+    }
 
     async with get_isolated_session() as session:
         result = await session.execute(
@@ -97,7 +100,7 @@ async def _parse_pending_messages_async() -> dict:
                 parsing_strategy = source.parsing_strategy if source else "auto"
                 supplier_id = source.supplier_id if source else None
 
-                parse_result, skipped, used_llm = await _process_single_message(
+                parse_result, skipped, used_llm, system_skip = await _process_single_message(
                     session=session,
                     message=msg,
                     parsing_strategy=parsing_strategy,
@@ -113,6 +116,8 @@ async def _parse_pending_messages_async() -> dict:
                 stats["processed"] += 1
                 stats["skipped_unchanged"] += skipped
                 stats["llm_calls"] = llm_calls_this_batch
+                stats["system_skipped"] += 1 if system_skip else 0
+
                 if parse_result == "parsed":
                     stats["parsed"] += 1
                 elif parse_result == "needs_review":
@@ -163,7 +168,7 @@ async def _parse_single_message_async(message_id: int) -> dict:
 
         supplier_id = source.supplier_id if source else None
 
-        status, _, _ = await _process_single_message(
+        status, _, _, _ = await _process_single_message(
             session=session,
             message=message,
             parsing_strategy=parsing_strategy,
@@ -185,18 +190,31 @@ async def _process_single_message(
     confidence_threshold: float,
     skip_unchanged: bool = True,
     llm_budget: int = 1,
-) -> tuple[str, int, bool]:
+) -> tuple[str, int, bool, bool]:
     """
-    Returns: (status, skipped_unchanged_count, used_llm)
-    llm_budget=0 means skip LLM entirely for this message (mark needs_review).
+    Returns: (status, skipped_unchanged_count, used_llm, system_skip)
+    system_skip=True means message was filtered before regex/LLM.
+    llm_budget=0 means skip LLM entirely (mark needs_review).
     """
     from app.models.offer import Offer
     from app.models.price_history import PriceHistory
     from app.parser.llm_parser import parse_with_llm
     from app.parser.normalizer import normalize_and_match
-    from app.parser.regex_parser import parse_message
+    from app.parser.regex_parser import is_obviously_not_price_message, parse_message
 
     text = message.message_text
+
+    # ------------------------------------------------------------------ #
+    # Pre-filter: системные сообщения бота, мусор без признаков цены      #
+    # ------------------------------------------------------------------ #
+    if is_obviously_not_price_message(text):
+        logger.debug(f"Message {message.id} is not a price message — skipped (pre-filter)")
+        message.parse_status = "failed"
+        message.parse_error = "Not a price message (pre-filter)"
+        message.is_processed = True
+        await session.flush()
+        return "failed", 0, False, True
+
     offers_created = 0
     skipped_unchanged = 0
     used_llm = False
@@ -211,7 +229,7 @@ async def _process_single_message(
             f"unparsed lines: {len(parse_result.unparsed_lines)}"
         )
 
-    # Step 2: LLM fallback (only if budget allows)
+    # Step 2: LLM fallback
     needs_llm = (
         parsing_strategy == "auto"
         and (
@@ -226,7 +244,7 @@ async def _process_single_message(
             message.parse_status = "needs_review"
             message.parse_error = "LLM budget exhausted for this batch"
             message.is_processed = True
-            return "needs_review", 0, False
+            return "needs_review", 0, False, False
 
         logger.debug(f"Falling back to LLM for message {message.id}")
         llm_offers = await parse_with_llm(text)
@@ -242,14 +260,14 @@ async def _process_single_message(
             message.parse_status = "needs_review"
             message.parse_error = "LLM budget exhausted for this batch"
             message.is_processed = True
-            return "needs_review", 0, False
+            return "needs_review", 0, False, False
 
     # Step 3: No offers extracted
     if not parsed_offers:
         message.parse_status = "failed"
         message.parse_error = "No offers could be extracted from the message"
         message.is_processed = True
-        return "failed", 0, used_llm
+        return "failed", 0, used_llm, False
 
     # Step 4: Process each parsed offer
     any_success = False
@@ -346,4 +364,4 @@ async def _process_single_message(
         status = "failed"
 
     await session.flush()
-    return status, skipped_unchanged, used_llm
+    return status, skipped_unchanged, used_llm, False
