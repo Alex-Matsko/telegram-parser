@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Source } from '../../types';
-import { Edit2, Power, Bot, Trash2, AlertTriangle, BarChart2 } from 'lucide-react';
+import { Edit2, Power, Bot, Trash2, AlertTriangle, BarChart2, User } from 'lucide-react';
 
 interface Props {
   sources: Source[];
@@ -21,6 +21,7 @@ function getTypeLabel(type: string) {
   switch (type) {
     case 'channel': return 'Канал';
     case 'group':   return 'Группа';
+    case 'user':    return 'Пользователь';
     case 'bot':     return 'Бот';
     default:        return type;
   }
@@ -31,6 +32,32 @@ function getStrategyLabel(s: string) {
     case 'regex': return 'Regex';
     case 'llm':   return 'LLM';
     default:      return s;
+  }
+}
+
+function TypeBadge({ type }: { type: string }) {
+  const base = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium';
+  switch (type) {
+    case 'channel':
+      return <span className={`${base} bg-accent/10 text-accent`}>Канал</span>;
+    case 'group':
+      return <span className={`${base} bg-purple-500/10 text-purple-400`}>Группа</span>;
+    case 'user':
+      return (
+        <span className={`${base} bg-teal-500/10 text-teal-400`}>
+          <User className="w-2.5 h-2.5" />
+          Пользователь
+        </span>
+      );
+    case 'bot':
+      return (
+        <span className={`${base} bg-warning/10 text-warning`}>
+          <Bot className="w-2.5 h-2.5" />
+          Бот
+        </span>
+      );
+    default:
+      return <span className={`${base} bg-surface-600 text-gray-400`}>{type}</span>;
   }
 }
 
@@ -106,14 +133,7 @@ export default function SourceList({ sources, onEdit, onToggle, onDelete, onStat
                   </div>
                 </td>
                 <td className="px-4 py-2.5">
-                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                    source.type === 'channel' ? 'bg-accent/10 text-accent' :
-                    source.type === 'group'   ? 'bg-purple-500/10 text-purple-400' :
-                                               'bg-warning/10 text-warning'
-                  }`}>
-                    {source.type === 'bot' && <Bot className="w-2.5 h-2.5" />}
-                    {getTypeLabel(source.type)}
-                  </span>
+                  <TypeBadge type={source.type} />
                 </td>
                 <td className="px-4 py-2.5 text-gray-400">{getStrategyLabel(source.parsing_strategy)}</td>
                 <td className="px-4 py-2.5 text-right text-gray-400">{formatTime(source.last_read_at)}</td>

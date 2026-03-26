@@ -6,7 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import TelegramClient
-from telethon.tl.types import Message
+from telethon.tl.functions.users import GetFullUserRequest
+from telethon.tl.types import InputPeerUser, Message
 
 from app.config import settings
 from app.models.raw_message import RawMessage
@@ -16,11 +17,29 @@ logger = logging.getLogger(__name__)
 
 
 def _ensure_utc(dt: datetime) -> datetime:
-    """Ensure datetime is timezone-aware UTC. Telethon usually returns UTC-aware,
-    but some builds return naive UTC datetimes — this handles both cases."""
+    """Ensure datetime is timezone-aware UTC."""
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+async def _resolve_entity(client: TelegramClient, source: Source):
+    """
+    Resolve a Telethon entity for any source type:
+    - channel / group : telegram_id is negative (e.g. -1002674030582)
+    - user            : telegram_id is a positive user_id (e.g. 5701246948)
+                        Telethon needs access_hash to open a user peer;
+                        we retrieve it via GetFullUserRequest.
+    """
+    if source.type == "user":
+        # For user chats the telegram_id is the plain numeric user_id.
+        # We first resolve the full user to get the access_hash, then
+        # build InputPeerUser so iter_messages can open the dialog.
+        full = await client(GetFullUserRequest(source.telegram_id))
+        user = full.users[0]
+        return InputPeerUser(user_id=user.id, access_hash=user.access_hash)
+    else:
+        return await client.get_entity(source.telegram_id)
 
 
 async def read_channel_messages(
@@ -30,19 +49,10 @@ async def read_channel_messages(
     limit: int = 200,
 ) -> int:
     """
-    Read new messages from a Telegram channel or group.
+    Read new messages from a Telegram channel, group, or user dialog.
 
-    Strategy:
-    - Incremental run (last_message_id is set):
-        iter_messages newest-first (reverse=False), stop as soon as we hit
-        a message id <= last_message_id OR date < cutoff. This way `limit`
-        counts only messages we haven’t seen yet, not the whole history.
-    - First run (last_message_id is None):
-        Use offset_date=cutoff so Telethon starts near the cutoff boundary,
-        then collect up to `limit` messages going newest-first and keep only
-        those within the cutoff window.
-
-    Returns the number of new messages saved.
+    - Incremental run: newest-first, stop at last_message_id boundary.
+    - First run: use offset_date=cutoff, newest-first, up to limit messages.
     """
     saved_count = 0
     skipped_old = 0
@@ -55,34 +65,25 @@ async def read_channel_messages(
 
     logger.info(
         f"[{source.source_name}] ▶ START {run_type} | "
-        f"telegram_id={source.telegram_id} | "
+        f"type={source.type} | telegram_id={source.telegram_id} | "
         f"last_message_id={source.last_message_id} | "
         f"cutoff={cutoff_date.strftime('%Y-%m-%d %H:%M')} UTC "
         f"(history_days={history_days}) | limit={limit}"
     )
 
     try:
-        logger.debug(
-            f"[{source.source_name}] Resolving entity for telegram_id={source.telegram_id} ..."
-        )
-        entity = await client.get_entity(source.telegram_id)
+        entity = await _resolve_entity(client, source)
+        entity_type = type(entity).__name__
+        entity_id = getattr(entity, 'user_id', None) or getattr(entity, 'id', '?')
+        entity_title = getattr(entity, 'title', None) or getattr(entity, 'username', str(entity_id))
         logger.info(
             f"[{source.source_name}] ✔ Entity resolved: "
-            f"type={type(entity).__name__} | id={getattr(entity, 'id', '?')} | "
-            f"title={getattr(entity, 'title', getattr(entity, 'username', '?'))}"
+            f"type={entity_type} | id={entity_id} | title={entity_title}"
         )
 
         messages: list[Message] = []
 
         if is_first_run:
-            # --- FIRST RUN: newest-first from offset_date ---
-            # offset_date tells Telethon to start at messages around that date.
-            # We iterate newest-first (reverse=False default) and stop when
-            # we go past the cutoff.
-            logger.debug(
-                f"[{source.source_name}] First-run iter: offset_date={cutoff_date} "
-                f"reverse=False limit={limit}"
-            )
             async for message in client.iter_messages(
                 entity,
                 limit=limit,
@@ -95,62 +96,31 @@ async def read_channel_messages(
                 msg_date = _ensure_utc(message.date) if message.date else None
                 if msg_date and msg_date < cutoff_date:
                     skipped_old += 1
-                    logger.debug(
-                        f"[{source.source_name}] ⏭ Skipped old id={message.id} "
-                        f"date={msg_date}"
-                    )
                     continue
                 messages.append(message)
-                logger.debug(
-                    f"[{source.source_name}] + Queued id={message.id} "
-                    f"date={msg_date} len={len(message.text)}"
-                )
-
-            # Restore chronological order for saving
             messages.reverse()
 
         else:
-            # --- INCREMENTAL RUN: newest-first, stop at known boundary ---
-            # Do NOT use reverse=True — it counts limit from the very beginning
-            # of history. Instead go newest-first and break early.
-            min_id = source.last_message_id  # exclusive lower bound
-            logger.debug(
-                f"[{source.source_name}] Incremental iter: min_id={min_id} "
-                f"reverse=False limit={limit}"
-            )
+            min_id = source.last_message_id
             async for message in client.iter_messages(
                 entity,
                 limit=limit,
                 reverse=False,
             ):
-                # Stop as soon as we reach already-seen messages
                 if message.id <= min_id:
                     logger.debug(
-                        f"[{source.source_name}] ⏹ Reached known boundary at "
-                        f"id={message.id} (≤ last_message_id={min_id}), stopping"
+                        f"[{source.source_name}] ⏹ Reached boundary id={message.id} "
+                        f"(≤ last_message_id={min_id}), stopping"
                     )
                     break
-
                 if not message.text:
                     skipped_empty += 1
                     continue
-
                 msg_date = _ensure_utc(message.date) if message.date else None
                 if msg_date and msg_date < cutoff_date:
                     skipped_old += 1
-                    logger.debug(
-                        f"[{source.source_name}] ⏭ Skipped old id={message.id} "
-                        f"date={msg_date}"
-                    )
                     continue
-
                 messages.append(message)
-                logger.debug(
-                    f"[{source.source_name}] + Queued id={message.id} "
-                    f"date={msg_date} len={len(message.text)}"
-                )
-
-            # Restore chronological order for saving
             messages.reverse()
 
         logger.info(
@@ -177,12 +147,6 @@ async def read_channel_messages(
                 "reply_to": msg.reply_to_msg_id if msg.reply_to else None,
             }
 
-            logger.debug(
-                f"[{source.source_name}] Saving [{idx + 1}/{len(messages)}] "
-                f"msg_id={msg.id} | sender={sender_name} | "
-                f"date={msg_date} | preview={msg.text[:80]!r}"
-            )
-
             stmt = pg_insert(RawMessage).values(
                 source_id=source.id,
                 telegram_message_id=msg.id,
@@ -198,11 +162,6 @@ async def read_channel_messages(
             result = await session.execute(stmt)
             if result.rowcount > 0:
                 saved_count += 1
-                logger.debug(f"[{source.source_name}] ✔ Saved msg_id={msg.id}")
-            else:
-                logger.debug(
-                    f"[{source.source_name}] ⚠ Duplicate skipped msg_id={msg.id}"
-                )
 
             if msg.id > last_msg_id:
                 last_msg_id = msg.id

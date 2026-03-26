@@ -40,6 +40,18 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
     onSubmit(formData);
   };
 
+  const telegramIdPlaceholder =
+    formData.type === 'user'
+      ? 'Числовой User ID, например 5701246948'
+      : formData.type === 'bot'
+      ? 'Telegram ID бота'
+      : 'Например -1001234567890';
+
+  const telegramIdHint =
+    formData.type === 'user'
+      ? 'Узнать User ID можно через @userinfobot или сервисы типа TELEGRAM ID CHECK. Только цифры, без минуса.'
+      : null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="card w-full max-w-md mx-4">
@@ -72,7 +84,8 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
               className="select-field w-full"
             >
               <option value="channel">Канал</option>
-              <option value="group">Группа</option>
+              <option value="group">Группа / Чат</option>
+              <option value="user">Пользователь (личный чат)</option>
               <option value="bot">Бот</option>
             </select>
           </div>
@@ -84,9 +97,12 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
               value={formData.telegram_id || ''}
               onChange={e => setFormData(d => ({ ...d, telegram_id: Number(e.target.value) }))}
               className="input-field w-full"
-              placeholder="-1001234567890"
+              placeholder={telegramIdPlaceholder}
               required
             />
+            {telegramIdHint && (
+              <p className="text-[10px] text-gray-500 mt-1">{telegramIdHint}</p>
+            )}
           </div>
 
           <div>
