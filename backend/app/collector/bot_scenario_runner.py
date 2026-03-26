@@ -1,36 +1,34 @@
 """
 Executes a BotScenario (steps_json) before reading messages from a bot source.
 
-steps_json format (list of step objects):
+steps_json format — list of step objects matching the UI BotScenarioEditor:
 
-  [{"action": "send",    "text": "Прайс"},
-   {"action": "wait",    "seconds": 3},
-   {"action": "send",    "text": "/start"},
-   {"action": "click",   "button": "Прайс"},   # inline / reply button by label
-   {"action": "wait",    "seconds": 5}]
+  [
+    {"action": "send_command",     "value": "/start",   "wait_sec": 2},
+    {"action": "send_text",        "value": "Прайс",   "wait_sec": 3},
+    {"action": "click_inline",     "value": "Прайс",   "wait_sec": 5},
+    {"action": "click_reply",      "value": "Прайс",   "wait_sec": 5},
+    {"action": "collect_response", "value": "",         "wait_sec": 0},
+    {"action": "wait",             "value": "",         "wait_sec": 3},
+  ]
 
 Supported actions:
-  send    — send a text message to the bot
-  wait    — sleep N seconds (default 3)
-  click   — press an inline or reply-keyboard button by its label text
+  send_command     — send text/command to the bot (same as send_text)
+  send_text        — send text message to the bot
+  click_inline     — click inline keyboard button by label
+  click_reply      — click reply keyboard button by label
+  collect_response — no-op marker; collector reads messages after scenario finishes
+  wait             — sleep wait_sec seconds
+
+After each step the runner sleeps `wait_sec` seconds (0 by default).
 """
 import asyncio
 import logging
 from typing import Any
 
 from telethon import TelegramClient
-from telethon.tl.custom import Button
-from telethon.tl.types import (
-    KeyboardButtonCallback,
-    KeyboardButtonRow,
-    ReplyInlineMarkup,
-    ReplyKeyboardMarkup,
-)
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_WAIT = 3
-_DEFAULT_RESPONSE_TIMEOUT = 8
 
 
 async def run_scenario(
@@ -44,29 +42,47 @@ async def run_scenario(
     """
     for i, step in enumerate(steps):
         action = step.get("action", "").lower()
+        value = step.get("value", "") or ""
+        wait_sec = float(step.get("wait_sec", 0))
 
-        if action == "send":
-            text = step.get("text", "")
-            if not text:
-                logger.warning(f"[{source_name}] step {i}: 'send' action has empty text, skipping")
-                continue
-            await client.send_message(entity, text)
-            logger.info(f"[{source_name}] step {i}: sent message {text!r}")
+        if action in ("send_command", "send_text"):
+            if not value:
+                logger.warning(
+                    f"[{source_name}] step {i}: '{action}' has empty value, skipping"
+                )
+            else:
+                await client.send_message(entity, value)
+                logger.info(
+                    f"[{source_name}] step {i}: [{action}] sent {value!r}"
+                )
+
+        elif action in ("click_inline", "click_reply"):
+            if not value:
+                logger.warning(
+                    f"[{source_name}] step {i}: '{action}' has empty button label, skipping"
+                )
+            else:
+                await _click_button(client, entity, value, source_name, step_index=i)
+
+        elif action == "collect_response":
+            # Marker step — actual collection happens in channel_reader after scenario
+            logger.info(
+                f"[{source_name}] step {i}: [collect_response] marker, no action"
+            )
 
         elif action == "wait":
-            seconds = float(step.get("seconds", _DEFAULT_WAIT))
-            logger.info(f"[{source_name}] step {i}: waiting {seconds}s")
-            await asyncio.sleep(seconds)
-
-        elif action == "click":
-            button_label = step.get("button", "")
-            if not button_label:
-                logger.warning(f"[{source_name}] step {i}: 'click' action has empty button label, skipping")
-                continue
-            await _click_button(client, entity, button_label, source_name, step_index=i)
+            logger.info(
+                f"[{source_name}] step {i}: [wait] sleeping {wait_sec}s"
+            )
 
         else:
-            logger.warning(f"[{source_name}] step {i}: unknown action {action!r}, skipping")
+            logger.warning(
+                f"[{source_name}] step {i}: unknown action {action!r}, skipping"
+            )
+            continue  # don't sleep for unknown actions
+
+        if wait_sec > 0:
+            await asyncio.sleep(wait_sec)
 
 
 async def _click_button(
@@ -77,14 +93,13 @@ async def _click_button(
     step_index: int,
 ) -> None:
     """
-    Find the most recent message from the bot that contains a button
-    matching `label` and click it.
+    Find the most recent message from the bot containing a button
+    matching `label` (case-insensitive) and click it.
     """
     async for message in client.iter_messages(entity, limit=10):
         if not message.buttons:
             continue
         for row in message.buttons:
-            # message.buttons is list[list[Button]]
             buttons = row if isinstance(row, list) else [row]
             for btn in buttons:
                 btn_text = getattr(btn, "text", "") or ""
