@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 import { getProductDetail } from '../../api/client';
 import { useNavigate } from 'react-router-dom';
 import { History, Loader2, TrendingUp, TrendingDown, ExternalLink, MessageSquare } from 'lucide-react';
-import type { OfferDetail } from '../../types';
 
 interface Props { productId: number; }
 
@@ -19,7 +18,7 @@ function fmtDate(iso: string | null): string {
 
 export default function PriceDetail({ productId }: Props) {
   const navigate = useNavigate();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ['productDetail', productId],
     queryFn: () => getProductDetail(productId),
   });
@@ -29,11 +28,16 @@ export default function PriceDetail({ productId }: Props) {
       <Loader2 className="w-4 h-4 animate-spin text-muted" />
     </div>
   );
+  if (error) return (
+    <div className="px-6 py-4 text-xs text-negative">Ошибка загрузки: {String(error)}</div>
+  );
   if (!data) return null;
 
-  const offers: OfferDetail[] = data.offers;
-  const sorted = [...offers].sort((a, b) => a.price - b.price);
-  const best = sorted[0];
+  // real API: offers[].offer_id; fallback to .id if API returns plain id
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const offers = [...(data.offers as any[])].sort((a, b) => a.price - b.price);
+  const best = offers[0];
+  const getId = (o: any) => o.offer_id ?? o.id;
 
   return (
     <div className="px-6 py-4 bg-surface-800/60 border-t border-border/30">
@@ -51,25 +55,23 @@ export default function PriceDetail({ productId }: Props) {
       </div>
 
       <div className="grid gap-2">
-        {sorted.map((offer, idx) => {
-          const isWinner = offer.offer_id === best.offer_id;
+        {offers.map((offer, idx) => {
+          const offerId    = getId(offer);
+          const isWinner   = offerId === getId(best);
           const diffFromBest = idx > 0 ? offer.price - best.price : 0;
-          const diffPct = idx > 0 ? Math.round((diffFromBest / best.price) * 100) : 0;
-          const conf = offer.confidence ?? offer.detected_confidence ?? 1;
-          const confCls = conf > 0.9 ? 'bg-positive' : conf > 0.7 ? 'bg-warning' : 'bg-negative';
+          const diffPct    = idx > 0 ? Math.round((diffFromBest / best.price) * 100) : 0;
+          const conf       = offer.confidence ?? offer.detected_confidence ?? 1;
+          const confCls    = conf > 0.9 ? 'bg-positive' : conf > 0.7 ? 'bg-warning' : 'bg-negative';
 
           return (
             <div
-              key={offer.offer_id}
+              key={offerId ?? idx}
               className={`rounded-lg border transition-colors ${
-                isWinner
-                  ? 'bg-positive/5 border-positive/30'
-                  : 'bg-surface-700/40 border-border/20'
+                isWinner ? 'bg-positive/5 border-positive/30' : 'bg-surface-700/40 border-border/20'
               }`}
             >
               {/* Main row */}
               <div className="flex items-center justify-between px-3 py-2.5">
-                {/* Left: supplier + availability */}
                 <div className="flex items-center gap-2 min-w-0">
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isWinner ? 'bg-positive' : 'bg-surface-500'}`} />
                   <div className="min-w-0">
@@ -86,7 +88,6 @@ export default function PriceDetail({ productId }: Props) {
                   </div>
                 </div>
 
-                {/* Right: price + diff + confidence */}
                 <div className="flex items-center gap-4 flex-shrink-0">
                   <div className="flex items-center gap-1" title={`Уверенность: ${Math.round(conf * 100)}%`}>
                     <div className="w-14 h-1 bg-surface-600 rounded-full overflow-hidden">
@@ -118,24 +119,18 @@ export default function PriceDetail({ productId }: Props) {
 
               {/* Source context row */}
               {(offer.raw_line || offer.source_name || offer.message_date) && (
-                <div className="px-3 pb-2.5 pt-0 flex items-start gap-2 border-t border-border/10">
+                <div className="px-3 pb-2.5 pt-1 flex items-start gap-2 border-t border-border/10">
                   <MessageSquare className="w-3 h-3 text-gray-600 flex-shrink-0 mt-0.5" />
                   <div className="flex flex-col gap-0.5 min-w-0">
-                    {/* Verbatim line from price list */}
                     {offer.raw_line && (
                       <span className="text-[11px] font-mono text-gray-400 truncate" title={offer.raw_line}>
                         {offer.raw_line}
                       </span>
                     )}
-                    {/* Channel name + date */}
                     <div className="flex items-center gap-2">
                       {offer.channel_url ? (
-                        <a
-                          href={offer.channel_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-[10px] text-accent hover:text-accent-hover transition-colors"
-                        >
+                        <a href={offer.channel_url} target="_blank" rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-[10px] text-accent hover:text-accent-hover transition-colors">
                           <ExternalLink className="w-2.5 h-2.5" />
                           {offer.source_name ?? offer.channel_url}
                         </a>
