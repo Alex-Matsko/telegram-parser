@@ -16,11 +16,15 @@ from telethon.tl.types import (
     User,
 )
 
+from app.collector.bot_scenario_runner import run_scenario
 from app.config import settings
 from app.models.raw_message import RawMessage
 from app.models.source import Source
 
 logger = logging.getLogger(__name__)
+
+# Default wait after triggering a bot scenario before reading its response
+_BOT_POST_SCENARIO_WAIT = 5
 
 
 def _ensure_utc(dt: datetime) -> datetime:
@@ -32,16 +36,10 @@ def _ensure_utc(dt: datetime) -> datetime:
 async def _resolve_bot(client: TelegramClient, source: Source):
     """
     Resolve a bot entity.
-
-    Bots don't appear in contacts.Search or dialog scans.
-    The only reliable method is get_entity('@username').
-
     Strategy:
-    1. Session cache via telegram_id (works on 2nd+ run)
-    2. Username lookup via source_name (strips leading @)
-    3. Username lookup via stored username field if present
+    1. Session cache
+    2. get_entity(@source_name)
     """
-    # 1. Session cache
     try:
         entity = await client.get_input_entity(PeerUser(source.telegram_id))
         logger.info(f"[bot-resolve] id={source.telegram_id} found in session cache")
@@ -49,41 +47,33 @@ async def _resolve_bot(client: TelegramClient, source: Source):
     except (ValueError, KeyError):
         pass
 
-    # 2. Try source_name as username (most common case: name = @t_go_price_bot)
     username = source.source_name.lstrip("@").strip()
     try:
         entity = await client.get_entity(f"@{username}")
-        logger.info(
-            f"[bot-resolve] id={source.telegram_id} resolved via @{username}"
-        )
+        logger.info(f"[bot-resolve] id={source.telegram_id} resolved via @{username}")
         return entity
     except Exception as e:
         logger.debug(f"[bot-resolve] get_entity(@{username}) failed: {e}")
 
-    # 3. Try username stored in source.username field if model has it
     stored_username = getattr(source, "username", None)
     if stored_username and stored_username != username:
         try:
             uname = stored_username.lstrip("@").strip()
             entity = await client.get_entity(f"@{uname}")
-            logger.info(
-                f"[bot-resolve] id={source.telegram_id} resolved via stored @{uname}"
-            )
+            logger.info(f"[bot-resolve] id={source.telegram_id} resolved via @{uname}")
             return entity
         except Exception as e:
             logger.debug(f"[bot-resolve] get_entity(@{stored_username}) failed: {e}")
 
     raise ValueError(
         f"Cannot resolve bot id={source.telegram_id} (source='{source.source_name}'): "
-        f"not found in session cache or by username. "
-        f"Make sure the source_name matches the bot's @username."
+        f"not found in session cache or by username."
     )
 
 
 async def _search_user_by_id(
     client: TelegramClient, user_id: int, source_name: str
 ) -> Optional[InputPeerUser]:
-    # 1. Session cache
     try:
         entity = await client.get_input_entity(PeerUser(user_id))
         logger.info(f"[user-resolve] id={user_id} found in session cache")
@@ -91,24 +81,19 @@ async def _search_user_by_id(
     except (ValueError, KeyError):
         pass
 
-    # 2. contacts.Search by source_name
     query = source_name.lstrip("@").strip()
     try:
         result = await client(SearchRequest(q=query, limit=10))
         for user in result.users:
             if isinstance(user, User) and user.id == user_id:
                 logger.info(
-                    f"[user-resolve] id={user_id} found via contacts.Search "
-                    f"query={query!r}"
+                    f"[user-resolve] id={user_id} found via contacts.Search query={query!r}"
                 )
                 return InputPeerUser(user_id=user.id, access_hash=user.access_hash)
     except Exception as e:
         logger.debug(f"[user-resolve] contacts.Search failed: {e}")
 
-    # 3. Full dialog scan
-    logger.info(
-        f"[user-resolve] id={user_id} not found in cache/search, scanning dialogs ..."
-    )
+    logger.info(f"[user-resolve] id={user_id} not found in cache/search, scanning dialogs ...")
     offset_date = 0
     offset_id = 0
     offset_peer = InputPeerEmpty()
@@ -128,9 +113,7 @@ async def _search_user_by_id(
             break
         for user in res.users:
             if isinstance(user, User) and user.id == user_id:
-                logger.info(
-                    f"[user-resolve] id={user_id} found in dialogs page={page}"
-                )
+                logger.info(f"[user-resolve] id={user_id} found in dialogs page={page}")
                 return InputPeerUser(user_id=user.id, access_hash=user.access_hash)
         if len(res.dialogs) < chunk:
             break
@@ -139,38 +122,53 @@ async def _search_user_by_id(
         offset_date = getattr(last_msg, 'date', 0)
         offset_peer = res.dialogs[-1].peer
 
-    logger.warning(
-        f"[user-resolve] id={user_id} not found after {page} dialog page(s)"
-    )
+    logger.warning(f"[user-resolve] id={user_id} not found after {page} dialog page(s)")
     return None
 
 
 async def _resolve_entity(client: TelegramClient, source: Source):
-    """
-    Resolve a Telegram entity for any source type:
-      - channel / group  → get_entity(telegram_id)
-      - user             → session cache → contacts.Search → dialog scan
-      - bot              → session cache → get_entity(@username)
-    """
     source_type = (source.type or "").lower()
-
     if source_type == "bot":
         return await _resolve_bot(client, source)
-
     if source_type == "user":
-        entity = await _search_user_by_id(
-            client, source.telegram_id, source.source_name
-        )
+        entity = await _search_user_by_id(client, source.telegram_id, source.source_name)
         if entity is not None:
             return entity
         raise ValueError(
             f"Cannot resolve user_id={source.telegram_id} "
-            f"(source='{source.source_name}'): not found in session cache, "
-            f"contacts search, or dialog scan."
+            f"(source='{source.source_name}'): not found."
         )
-
-    # channel / group / supergroup
     return await client.get_entity(source.telegram_id)
+
+
+async def _trigger_bot_scenario(
+    client: TelegramClient,
+    entity,
+    source: Source,
+) -> None:
+    """
+    If the source has a bot_scenario attached, execute it.
+    Falls back to sending 'Прайс' if no scenario is configured.
+    Always waits _BOT_POST_SCENARIO_WAIT seconds after triggering.
+    """
+    scenario = getattr(source, "bot_scenario", None)
+
+    if scenario and scenario.steps_json:
+        steps = scenario.steps_json
+        logger.info(
+            f"[{source.source_name}] Running bot scenario "
+            f"'{scenario.scenario_name}' ({len(steps)} steps)"
+        )
+        await run_scenario(client, entity, steps, source_name=source.source_name)
+    else:
+        # No scenario configured — use simple default: send 'Прайс'
+        logger.info(
+            f"[{source.source_name}] No scenario configured, "
+            f"sending default trigger 'Прайс'"
+        )
+        await client.send_message(entity, "Прайс")
+        import asyncio
+        await asyncio.sleep(_BOT_POST_SCENARIO_WAIT)
 
 
 async def read_channel_messages(
@@ -187,6 +185,7 @@ async def read_channel_messages(
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=history_days)
     is_first_run = source.last_message_id is None
     run_type = "first-run" if is_first_run else "incremental"
+    source_type = (source.type or "").lower()
 
     logger.info(
         f"[{source.source_name}] ▶ START {run_type} | "
@@ -208,6 +207,10 @@ async def read_channel_messages(
             f"[{source.source_name}] ✔ Entity resolved: "
             f"type={type(entity).__name__} | id={entity_id} | title={entity_title}"
         )
+
+        # For bots: trigger scenario/command to get fresh price list
+        if source_type == "bot":
+            await _trigger_bot_scenario(client, entity, source)
 
         messages: list[Message] = []
 
@@ -253,8 +256,7 @@ async def read_channel_messages(
 
         if not messages:
             logger.info(
-                f"[{source.source_name}] ✔ No new messages — up to date "
-                f"(id={source.id})"
+                f"[{source.source_name}] ✔ No new messages — up to date (id={source.id})"
             )
             return 0
 
