@@ -141,12 +141,14 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "watch ultra":           ("Apple Watch", "Apple Watch Ultra",     "watch"),
     "apple watch series 11": ("Apple Watch", "Apple Watch Series 11", "watch"),
     "apple watch s11":       ("Apple Watch", "Apple Watch Series 11", "watch"),
+    "watch series 11":       ("Apple Watch", "Apple Watch Series 11", "watch"),
     "aw s11":                ("Apple Watch", "Apple Watch Series 11", "watch"),
     "aws11":                 ("Apple Watch", "Apple Watch Series 11", "watch"),
     "watch s11":             ("Apple Watch", "Apple Watch Series 11", "watch"),
     "s11":                   ("Apple Watch", "Apple Watch Series 11", "watch"),
     "apple watch series 10": ("Apple Watch", "Apple Watch Series 10", "watch"),
     "apple watch s10":       ("Apple Watch", "Apple Watch Series 10", "watch"),
+    "watch series 10":       ("Apple Watch", "Apple Watch Series 10", "watch"),
     "aw s10":                ("Apple Watch", "Apple Watch Series 10", "watch"),
     "aws10":                 ("Apple Watch", "Apple Watch Series 10", "watch"),
     "watch 10":              ("Apple Watch", "Apple Watch Series 10", "watch"),
@@ -200,8 +202,10 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "mac studio":         ("Mac", "Mac Studio",         "desktop"),
 
     # ===== APPLE: Apple TV =====
-    "apple tv 4k":  ("Apple TV", "Apple TV 4K", "tv"),
-    "apple tv":     ("Apple TV", "Apple TV",     "tv"),
+    "apple tv 4k 2022":  ("Apple TV", "Apple TV 4K", "tv"),
+    "apple tv 4k 2021":  ("Apple TV", "Apple TV 4K", "tv"),
+    "apple tv 4k":       ("Apple TV", "Apple TV 4K", "tv"),
+    "apple tv":          ("Apple TV", "Apple TV",     "tv"),
 
     # ===== SAMSUNG: Galaxy S26 =====
     "galaxy s26 ultra":  ("Galaxy", "Galaxy S26 Ultra", "smartphone"),
@@ -286,6 +290,19 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "honor x8a":         ("Honor",       "Honor X8a",         "smartphone"),
     "honor x7b":         ("Honor",       "Honor X7b",         "smartphone"),
     "honor x7a":         ("Honor",       "Honor X7a",         "smartphone"),
+
+    # ===== ONEPLUS =====
+    "oneplus 13r":         ("OnePlus", "OnePlus 13R",         "smartphone"),
+    "oneplus 13":          ("OnePlus", "OnePlus 13",          "smartphone"),
+    "oneplus 12r":         ("OnePlus", "OnePlus 12R",         "smartphone"),
+    "oneplus 12":          ("OnePlus", "OnePlus 12",          "smartphone"),
+    "oneplus nord 5":      ("OnePlus", "OnePlus Nord 5",      "smartphone"),
+    "oneplus nord 4":      ("OnePlus", "OnePlus Nord 4",      "smartphone"),
+    "oneplus nord ce 4":   ("OnePlus", "OnePlus Nord CE 4",   "smartphone"),
+    "oneplus nord ce 3":   ("OnePlus", "OnePlus Nord CE 3",   "smartphone"),
+    "oneplus nord":        ("OnePlus", "OnePlus Nord",        "smartphone"),
+    "oneplus open":        ("OnePlus", "OnePlus Open",        "smartphone"),
+    "oneplus open pro":    ("OnePlus", "OnePlus Open Pro",    "smartphone"),
 
     # ===== NINTENDO =====
     "nintendo switch oled":    ("Nintendo Switch", "Nintendo Switch OLED", "console"),
@@ -373,6 +390,7 @@ LINE_TO_BRAND: dict[str, str] = {
     "Huawei Nova":       "Huawei",
     "Honor Magic":       "Honor",
     "Honor":             "Honor",
+    "OnePlus":           "OnePlus",
     "Nintendo Switch":   "Nintendo",
     "Meta Quest":        "Meta",
     "GoPro":             "GoPro",
@@ -447,12 +465,19 @@ COLOR_ALIASES: dict[str, str] = {
     "grey": "Gray",
     "navy": "Navy",
     "orange": "Orange",
+    "cosmic orange": "Cosmic Orange",
     "teal": "Teal",
     "ultramarine": "Ultramarine",
     "amber silk": "Amber Silk",
     "ambersilk": "Amber Silk",
     "neon blue": "Neon Blue",
     "neon red": "Neon Red",
+    "dry ice": "Dry Ice",
+    "dryice": "Dry Ice",
+    "deep blue": "Deep Blue",
+    "deepblue": "Deep Blue",
+    "rose gold": "Rose Gold",
+    "rosegold": "Rose Gold",
 }
 
 # --------------------------------------------------------------------------
@@ -466,9 +491,7 @@ MEMORY_ALIASES: dict[str, str] = {
     "512": "512GB",  "512gb": "512GB",
     "1tb": "1TB",    "1 tb": "1TB",    "1024": "1TB",  "1024gb": "1TB",
     "2tb": "2TB",    "2 tb": "2TB",
-    # Variants with capital
     "1Tb": "1TB",    "2Tb": "2TB",
-    # RAM
     "8gb": "8GB",    "16gb": "16GB",   "18gb": "18GB",
     "24gb": "24GB",  "36gb": "36GB",   "48gb": "48GB",
     "96gb": "96GB",  "128gb ram": "128GB", "192gb": "192GB",
