@@ -11,6 +11,7 @@ Supported price formats:
   "Canon G7 X Mark III Silver - 88000"
   "**17 Pro Max 256 Blue (eSim) - 107200 **"
   "iPad 11 128GB Blue - 28400"
+  "iPhone 13 128GB Pink - 47700"
 """
 import logging
 import re
@@ -58,19 +59,12 @@ class ParseResult:
 # ---------------------------------------------------------------------------
 
 _MD_BOLD_ITALIC = re.compile(r'[*_]{1,3}')
-# Emoji flag pairs like 🇺🇸 🇷🇺 🇮🇳 — these must NOT be treated as currency signals
 _EMOJI_FLAGS = re.compile(r'[\U0001F1E0-\U0001F1FF]{2}', re.UNICODE)
-_EMOJI_MISC = re.compile(
-    r'[\U0001F300-\U0001FAFF]'
-    r'|[\u2600-\u27BF]',
-    re.UNICODE,
-)
 
 
 def _strip_markdown(text: str) -> str:
-    """Remove Telegram markdown markers. Keep emoji flags stripped to avoid currency misdetection."""
     text = _MD_BOLD_ITALIC.sub('', text)
-    text = _EMOJI_FLAGS.sub('', text)   # 🇺🇸 🇷🇺 etc — not currency
+    text = _EMOJI_FLAGS.sub('', text)
     text = re.sub(r'\s{2,}', ' ', text)
     return text.strip()
 
@@ -123,17 +117,8 @@ _MEMORY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# RAM/Storage combos: 8/256, 12/512, 16/1TB etc.
 _RAM_STORAGE_PATTERN = re.compile(
     r'\b\d{1,3}/(?:1tb|2tb|\d{2,4})\b',
-    re.IGNORECASE,
-)
-
-# Bare model generation number followed immediately by memory size
-# Covers: "13 128", "14 256", "11 128" (iPad gen), "17 512" etc.
-# Must NOT match when followed by a dash+price like "- 28400"
-_MODEL_GEN_MEMORY = re.compile(
-    r'(?<![\d.])\b(\d{1,2})\s+(32|64|128|256|512|1024)(?=\s|$|\s*[a-zA-Z])',
     re.IGNORECASE,
 )
 
@@ -260,15 +245,19 @@ def _parse_single_line(line: str) -> Optional[ParsedOffer]:
     text = line
 
     model_info, model_span = _extract_model_with_span(text)
+    # remaining = text with model name cut out
+    # Used for both memory extraction AND price extraction
+    # to prevent "iPhone 16" + "256" concatenating into price 16256
     remaining = text
     if model_info:
         offer.line, offer.model, offer.category = model_info
         offer.brand = _resolve_brand(offer.line)
         offer.confidence += 0.4
         if model_span:
-            remaining = text[:model_span[0]] + " " + text[model_span[1]:]
+            remaining = (text[:model_span[0]] + " " + text[model_span[1]:]).strip()
 
-    price_val, currency, _ = _extract_price(text)
+    # KEY FIX: extract price from remaining (model stripped), not full text
+    price_val, currency, _ = _extract_price(remaining)
     if price_val is not None:
         offer.price = price_val
         offer.currency = currency
@@ -278,6 +267,7 @@ def _parse_single_line(line: str) -> Optional[ParsedOffer]:
         offer.memory = memory
         offer.confidence += 0.2
 
+    # Color/condition/sim still use full text for broader context
     color = _extract_color(text)
     if color:
         offer.color = color
@@ -322,15 +312,6 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
     for m in _RAM_STORAGE_PATTERN.finditer(text):
         for part in re.split(r'/', m.group(0).lower()):
             excluded.add(re.sub(r'[^\d]', '', part))
-
-    # Exclude bare gen+memory combos: "11 128", "13 128", "iPad 11 128"
-    # but only when they are NOT adjacent to a dash+price pattern
-    for m in _MODEL_GEN_MEMORY.finditer(text):
-        # Check there's no dash-price immediately after the memory number
-        after = text[m.end():].lstrip()
-        if not re.match(r'[—\-]\s*\d{4,}', after):
-            excluded.add(m.group(1).strip())
-            excluded.add(m.group(2).strip())
 
     def _try_parse(num_str: str, curr_raw: str) -> Optional[tuple[float, str]]:
         normalized = _normalize_price_str(num_str)
