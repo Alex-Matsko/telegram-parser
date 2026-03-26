@@ -1,7 +1,7 @@
 // ==================== Source Types ====================
 export interface Source {
   id: number;
-  type: 'channel' | 'group' | 'bot';
+  type: 'channel' | 'group' | 'bot' | 'user';
   telegram_id: number;
   source_name: string;
   supplier_id: number | null;
@@ -18,7 +18,7 @@ export interface Source {
 }
 
 export interface SourceCreate {
-  type: 'channel' | 'group' | 'bot';
+  type: 'channel' | 'group' | 'bot' | 'user';
   telegram_id: number;
   source_name: string;
   supplier_id?: number | null;
@@ -141,7 +141,7 @@ export interface PriceListFilters {
   memory?: string;
   color?: string;
   condition?: string;
-  supplier?: string;       // filter by supplier name (used in PriceListFilters UI)
+  supplier?: string;
   currency?: string;
   price_min?: number;
   price_max?: number;
