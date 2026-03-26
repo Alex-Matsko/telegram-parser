@@ -6,12 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import TelegramClient
-from telethon.tl.functions.contacts import SearchRequest, ImportContactsRequest
+from telethon.tl.functions.contacts import SearchRequest
 from telethon.tl.functions.messages import GetDialogsRequest
 from telethon.tl.types import (
     InputPeerEmpty,
     InputPeerUser,
-    InputPhoneContact,
     Message,
     PeerUser,
     User,
@@ -33,14 +32,6 @@ def _ensure_utc(dt: datetime) -> datetime:
 async def _search_user_by_id(
     client: TelegramClient, user_id: int, source_name: str
 ) -> Optional[InputPeerUser]:
-    """
-    Try every available method to obtain an InputPeerUser for a given user_id.
-
-    Strategy (in order):
-    1. Session cache   — instant, works after first successful resolve.
-    2. contacts.Search — search by source_name (works if it’s a username like @Parnasa1).
-    3. Dialog scan     — paginate all dialogs; catches old chats not in cache.
-    """
     # 1. Session cache
     try:
         entity = await client.get_input_entity(PeerUser(user_id))
@@ -49,28 +40,19 @@ async def _search_user_by_id(
     except (ValueError, KeyError):
         pass
 
-    # 2. contacts.Search by source_name (strip @ if present)
+    # 2. contacts.Search by source_name
     query = source_name.lstrip("@").strip()
     try:
         result = await client(SearchRequest(q=query, limit=10))
         for user in result.users:
             if isinstance(user, User) and user.id == user_id:
-                logger.info(
-                    f"[user-resolve] id={user_id} found via contacts.Search "
-                    f"query={query!r}"
-                )
-                return InputPeerUser(
-                    user_id=user.id,
-                    access_hash=user.access_hash,
-                )
+                logger.info(f"[user-resolve] id={user_id} found via contacts.Search query={query!r}")
+                return InputPeerUser(user_id=user.id, access_hash=user.access_hash)
     except Exception as e:
         logger.debug(f"[user-resolve] contacts.Search failed: {e}")
 
-    # 3. Full dialog scan (paginates until user found or exhausted)
-    logger.info(
-        f"[user-resolve] id={user_id} not found in cache/search, "
-        f"scanning all dialogs ..."
-    )
+    # 3. Full dialog scan
+    logger.info(f"[user-resolve] id={user_id} not found in cache/search, scanning dialogs ...")
     offset_date = 0
     offset_id = 0
     offset_peer = InputPeerEmpty()
@@ -86,32 +68,20 @@ async def _search_user_by_id(
             limit=chunk,
             hash=0,
         ))
-
         if not res.dialogs:
             break
-
         for user in res.users:
             if isinstance(user, User) and user.id == user_id:
-                logger.info(
-                    f"[user-resolve] id={user_id} found in dialogs page={page}"
-                )
-                return InputPeerUser(
-                    user_id=user.id,
-                    access_hash=user.access_hash,
-                )
-
+                logger.info(f"[user-resolve] id={user_id} found in dialogs page={page}")
+                return InputPeerUser(user_id=user.id, access_hash=user.access_hash)
         if len(res.dialogs) < chunk:
-            logger.info(
-                f"[user-resolve] Dialog scan exhausted after {page} page(s), "
-                f"user id={user_id} not found"
-            )
             break
-
         last_msg = res.messages[-1]
         offset_id = getattr(last_msg, 'id', 0)
         offset_date = getattr(last_msg, 'date', 0)
         offset_peer = res.dialogs[-1].peer
 
+    logger.warning(f"[user-resolve] id={user_id} not found after {page} dialog page(s)")
     return None
 
 
@@ -119,16 +89,13 @@ async def _resolve_entity(client: TelegramClient, source: Source):
     if source.type != "user":
         return await client.get_entity(source.telegram_id)
 
-    user_id = source.telegram_id
-    entity = await _search_user_by_id(client, user_id, source.source_name)
-
+    entity = await _search_user_by_id(client, source.telegram_id, source.source_name)
     if entity is not None:
         return entity
 
     raise ValueError(
-        f"Cannot resolve user_id={user_id} (source='{source.source_name}'): "
-        f"not found in session cache, contacts search, or dialog scan. "
-        f"Regenerate TELEGRAM_SESSION_STRING while the conversation is open."
+        f"Cannot resolve user_id={source.telegram_id} (source='{source.source_name}'): "
+        f"not found in session cache, contacts search, or dialog scan."
     )
 
 
@@ -157,7 +124,6 @@ async def read_channel_messages(
 
     try:
         entity = await _resolve_entity(client, source)
-        entity_type = type(entity).__name__
         entity_id = getattr(entity, 'user_id', None) or getattr(entity, 'id', '?')
         entity_title = (
             getattr(entity, 'title', None)
@@ -166,27 +132,37 @@ async def read_channel_messages(
         )
         logger.info(
             f"[{source.source_name}] ✔ Entity resolved: "
-            f"type={entity_type} | id={entity_id} | title={entity_title}"
+            f"type={type(entity).__name__} | id={entity_id} | title={entity_title}"
         )
 
         messages: list[Message] = []
 
         if is_first_run:
-            async for message in client.iter_messages(
-                entity, limit=limit, offset_date=cutoff_date, reverse=False,
-            ):
+            # Read newest-first (default), stop as soon as we hit a message
+            # older than cutoff. Do NOT pass offset_date — Telethon's offset_date
+            # means "fetch messages OLDER than this date", which is the opposite
+            # of what we want. Instead we iterate newest-first and break early.
+            async for message in client.iter_messages(entity, limit=limit):
                 if not message.text:
                     skipped_empty += 1
                     continue
                 msg_date = _ensure_utc(message.date) if message.date else None
                 if msg_date and msg_date < cutoff_date:
+                    # Messages are newest-first; once we hit one older than
+                    # cutoff all subsequent ones will be even older — stop.
+                    logger.debug(
+                        f"[{source.source_name}] ⏹ Reached cutoff at "
+                        f"msg id={message.id} date={msg_date}, stopping"
+                    )
                     skipped_old += 1
-                    continue
+                    break
                 messages.append(message)
+            # Reverse so we save oldest→newest (preserves chronological order)
             messages.reverse()
+
         else:
             min_id = source.last_message_id
-            async for message in client.iter_messages(entity, limit=limit, reverse=False):
+            async for message in client.iter_messages(entity, limit=limit):
                 if message.id <= min_id:
                     logger.debug(
                         f"[{source.source_name}] ⏹ Reached boundary "
@@ -210,9 +186,7 @@ async def read_channel_messages(
         )
 
         if not messages:
-            logger.info(
-                f"[{source.source_name}] ✔ No new messages — up to date (id={source.id})"
-            )
+            logger.info(f"[{source.source_name}] ✔ No new messages — up to date (id={source.id})")
             return 0
 
         last_msg_id = source.last_message_id or 0
