@@ -2,7 +2,8 @@
 import logging
 
 from celery import Celery
-from celery.schedules import crontab
+from celery.schedules import crontab  # noqa: F401  kept for future use
+from celery.signals import worker_process_init
 
 from app.config import settings
 
@@ -25,32 +26,46 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="Europe/Moscow",
     enable_utc=True,
-    # Worker reliability
     task_acks_late=True,
     worker_prefetch_multiplier=1,
-    # Default timeouts for all tasks
     task_soft_time_limit=300,
     task_time_limit=360,
     beat_schedule={
-        # ТЗ 4.2: collect every 15 minutes
         "collect-from-all-sources": {
             "task": "app.tasks.collect.collect_from_all_sources",
-            "schedule": 900,  # 15 minutes
+            "schedule": 900,
         },
-        # ТЗ 4.3: bot scenarios every 30 minutes
         "execute-bot-scenarios": {
             "task": "app.tasks.collect.execute_all_bot_scenarios",
-            "schedule": 1800,  # 30 minutes
+            "schedule": 1800,
         },
-        # Parse pending messages every 5 minutes
         "parse-pending-messages": {
             "task": "app.tasks.parse.parse_pending_messages",
-            "schedule": 300,  # 5 minutes
+            "schedule": 300,
         },
-        # Refresh price list every 10 minutes
         "refresh-price-list": {
             "task": "app.tasks.aggregate.refresh_price_list",
-            "schedule": 600,  # 10 minutes
+            "schedule": 600,
         },
     },
 )
+
+
+@worker_process_init.connect
+def setup_worker_logging(**kwargs):
+    """
+    Install RedisLogHandler in every Celery worker process so that
+    all task logs (collect, parse, aggregate) appear in the frontend log viewer.
+    """
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    # Import here to avoid circular imports at module load time
+    from app.api.logs import _install_handler
+    _install_handler()
+    logging.getLogger(__name__).info(
+        "[Celery worker] RedisLogHandler installed — logs will appear in frontend"
+    )
