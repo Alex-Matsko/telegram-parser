@@ -195,3 +195,29 @@ export async function getFilterOptions(): Promise<FilterOptions> {
   if (USE_MOCKS) { await delay(100); return mockFilterOptions; }
   return request('/filters');
 }
+
+// ==================== Logs ====================
+export interface LogRecord {
+  ts: string;
+  level: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
+  logger: string;
+  message: string;
+}
+export interface LogsResponse {
+  total: number;
+  records: LogRecord[];
+}
+export async function getLogs(params: {
+  level?: string;
+  limit?: number;
+  logger_filter?: string;
+} = {}): Promise<LogsResponse> {
+  const p = new URLSearchParams();
+  if (params.level) p.set('level', params.level);
+  if (params.limit) p.set('limit', String(params.limit));
+  if (params.logger_filter) p.set('logger_filter', params.logger_filter);
+  return request(`/logs?${p.toString()}`);
+}
+export async function clearLogs(): Promise<void> {
+  await request('/logs', { method: 'DELETE' });
+}

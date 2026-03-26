@@ -5,6 +5,7 @@ import PriceListPage from './pages/PriceListPage';
 import HistoryPage from './pages/HistoryPage';
 import SourcesPage from './pages/SourcesPage';
 import UnresolvedPage from './pages/UnresolvedPage';
+import LogsPage from './pages/LogsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,6 +27,7 @@ export default function App() {
             <Route path="/history/:productId" element={<HistoryPage />} />
             <Route path="/sources" element={<SourcesPage />} />
             <Route path="/unresolved" element={<UnresolvedPage />} />
+            <Route path="/logs" element={<LogsPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

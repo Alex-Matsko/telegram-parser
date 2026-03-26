@@ -3,13 +3,13 @@ import { useQuery } from '@tanstack/react-query';
 import { getStats } from '../api/client';
 import {
   BarChart3,
-  History,
   Radio,
   AlertCircle,
   Package,
   Activity,
   Clock,
   MessageSquareWarning,
+  ScrollText,
 } from 'lucide-react';
 
 function StatsBar() {
@@ -63,6 +63,7 @@ const navItems = [
   { to: '/', label: 'Сводный прайс', icon: BarChart3 },
   { to: '/sources', label: 'Источники', icon: Radio },
   { to: '/unresolved', label: 'Неразобранные', icon: AlertCircle },
+  { to: '/logs', label: 'Логи', icon: ScrollText },
 ];
 
 export default function Layout() {
