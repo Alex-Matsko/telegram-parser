@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
-import type { Source, SourceCreate } from '../../types';
+import { useQuery } from '@tanstack/react-query';
+import type { Source, SourceCreate, BotScenario } from '../../types';
+import { getBotScenarios } from '../../api/client';
 import { X } from 'lucide-react';
 
 interface Props {
@@ -18,6 +20,11 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
     poll_interval_minutes: 30,
     parsing_strategy: 'auto',
     bot_scenario_id: null,
+  });
+
+  const { data: scenarios } = useQuery<BotScenario[]>({
+    queryKey: ['botScenarios'],
+    queryFn: getBotScenarios,
   });
 
   useEffect(() => {
@@ -52,6 +59,9 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
       ? 'Узнать User ID можно через @userinfobot или сервисы типа TELEGRAM ID CHECK. Только цифры, без минуса.'
       : null;
 
+  const isBot = formData.type === 'bot';
+  const activeScenarios = scenarios?.filter(s => s.is_active) ?? [];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="card w-full max-w-md mx-4">
@@ -80,7 +90,15 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
             <label className="block text-xs text-gray-400 mb-1">Тип</label>
             <select
               value={formData.type}
-              onChange={e => setFormData(d => ({ ...d, type: e.target.value as SourceCreate['type'] }))}
+              onChange={e => {
+                const newType = e.target.value as SourceCreate['type'];
+                setFormData(d => ({
+                  ...d,
+                  type: newType,
+                  // reset scenario if switching away from bot
+                  bot_scenario_id: newType === 'bot' ? d.bot_scenario_id : null,
+                }));
+              }}
               className="select-field w-full"
             >
               <option value="channel">Канал</option>
@@ -104,6 +122,35 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
               <p className="text-[10px] text-gray-500 mt-1">{telegramIdHint}</p>
             )}
           </div>
+
+          {/* Bot scenario selector — visible only when type=bot */}
+          {isBot && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Сценарий бота</label>
+              <select
+                value={formData.bot_scenario_id ?? ''}
+                onChange={e =>
+                  setFormData(d => ({
+                    ...d,
+                    bot_scenario_id: e.target.value ? Number(e.target.value) : null,
+                  }))
+                }
+                className="select-field w-full"
+              >
+                <option value="">— Без сценария (отправить «Прайс») —</option>
+                {activeScenarios.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.scenario_name} ({s.bot_name})
+                  </option>
+                ))}
+              </select>
+              {activeScenarios.length === 0 && (
+                <p className="text-[10px] text-gray-500 mt-1">
+                  Нет активных сценариев. Создайте сценарий в разделе ниже.
+                </p>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-xs text-gray-400 mb-1">Интервал опроса (мин)</label>
