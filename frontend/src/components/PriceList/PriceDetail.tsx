@@ -1,12 +1,20 @@
 import { useQuery } from '@tanstack/react-query';
 import { getProductDetail } from '../../api/client';
 import { useNavigate } from 'react-router-dom';
-import { History, Loader2, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { History, Loader2, TrendingUp, TrendingDown, ExternalLink, MessageSquare } from 'lucide-react';
+import type { OfferDetail } from '../../types';
 
 interface Props { productId: number; }
 
 function fmt(price: number, currency: string) {
   return currency === 'USD' ? `$${price.toLocaleString('ru-RU')}` : `${price.toLocaleString('ru-RU')} ₽`;
+}
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })
+    + ' ' + d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 }
 
 export default function PriceDetail({ productId }: Props) {
@@ -23,7 +31,7 @@ export default function PriceDetail({ productId }: Props) {
   );
   if (!data) return null;
 
-  const { offers } = data;
+  const offers: OfferDetail[] = data.offers;
   const sorted = [...offers].sort((a, b) => a.price - b.price);
   const best = sorted[0];
 
@@ -44,69 +52,103 @@ export default function PriceDetail({ productId }: Props) {
 
       <div className="grid gap-2">
         {sorted.map((offer, idx) => {
-          const isWinner = offer.id === best.id;
+          const isWinner = offer.offer_id === best.offer_id;
           const diffFromBest = idx > 0 ? offer.price - best.price : 0;
           const diffPct = idx > 0 ? Math.round((diffFromBest / best.price) * 100) : 0;
-          const conf = offer.detected_confidence;
+          const conf = offer.confidence ?? offer.detected_confidence ?? 1;
           const confCls = conf > 0.9 ? 'bg-positive' : conf > 0.7 ? 'bg-warning' : 'bg-negative';
 
           return (
             <div
-              key={offer.id}
-              className={`flex items-center justify-between rounded-lg px-3 py-2.5 border transition-colors ${
+              key={offer.offer_id}
+              className={`rounded-lg border transition-colors ${
                 isWinner
                   ? 'bg-positive/5 border-positive/30'
                   : 'bg-surface-700/40 border-border/20'
               }`}
             >
-              {/* Left: supplier + availability */}
-              <div className="flex items-center gap-2 min-w-0">
-                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isWinner ? 'bg-positive' : 'bg-surface-500'}`} />
-                <div className="min-w-0">
-                  <span className={`text-xs font-medium ${ isWinner ? 'text-positive' : 'text-gray-200'}`}>
-                    {offer.supplier_name}
-                  </span>
-                  {offer.availability && (
-                    <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${
-                      offer.availability === 'в наличии'
-                        ? 'bg-positive/10 text-positive'
-                        : 'bg-warning/10 text-warning'
-                    }`}>{offer.availability}</span>
+              {/* Main row */}
+              <div className="flex items-center justify-between px-3 py-2.5">
+                {/* Left: supplier + availability */}
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isWinner ? 'bg-positive' : 'bg-surface-500'}`} />
+                  <div className="min-w-0">
+                    <span className={`text-xs font-medium ${isWinner ? 'text-positive' : 'text-gray-200'}`}>
+                      {offer.supplier_name}
+                    </span>
+                    {offer.availability && (
+                      <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${
+                        offer.availability === 'в наличии'
+                          ? 'bg-positive/10 text-positive'
+                          : 'bg-warning/10 text-warning'
+                      }`}>{offer.availability}</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right: price + diff + confidence */}
+                <div className="flex items-center gap-4 flex-shrink-0">
+                  <div className="flex items-center gap-1" title={`Уверенность: ${Math.round(conf * 100)}%`}>
+                    <div className="w-14 h-1 bg-surface-600 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${confCls}`} style={{ width: `${conf * 100}%` }} />
+                    </div>
+                    <span className="text-[10px] text-gray-600">{Math.round(conf * 100)}%</span>
+                  </div>
+
+                  {idx > 0 ? (
+                    <div className="flex items-center gap-0.5 text-[10px] text-negative w-20 justify-end">
+                      <TrendingUp className="w-3 h-3" />
+                      <span>+{fmt(diffFromBest, offer.currency)}</span>
+                      <span className="text-gray-600">({diffPct}%)</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-0.5 text-[10px] text-positive w-20 justify-end">
+                      <TrendingDown className="w-3 h-3" />
+                      <span>лучшая</span>
+                    </div>
                   )}
+
+                  <span className={`font-mono font-bold w-28 text-right ${
+                    isWinner ? 'text-positive text-sm' : 'text-gray-300 text-xs'
+                  }`}>
+                    {fmt(offer.price, offer.currency)}
+                  </span>
                 </div>
               </div>
 
-              {/* Right: price + diff + confidence */}
-              <div className="flex items-center gap-4 flex-shrink-0">
-                {/* confidence bar */}
-                <div className="flex items-center gap-1" title={`Уверенность: ${Math.round(conf * 100)}%`}>
-                  <div className="w-14 h-1 bg-surface-600 rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full ${confCls}`} style={{ width: `${conf * 100}%` }} />
+              {/* Source context row */}
+              {(offer.raw_line || offer.source_name || offer.message_date) && (
+                <div className="px-3 pb-2.5 pt-0 flex items-start gap-2 border-t border-border/10">
+                  <MessageSquare className="w-3 h-3 text-gray-600 flex-shrink-0 mt-0.5" />
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    {/* Verbatim line from price list */}
+                    {offer.raw_line && (
+                      <span className="text-[11px] font-mono text-gray-400 truncate" title={offer.raw_line}>
+                        {offer.raw_line}
+                      </span>
+                    )}
+                    {/* Channel name + date */}
+                    <div className="flex items-center gap-2">
+                      {offer.channel_url ? (
+                        <a
+                          href={offer.channel_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-[10px] text-accent hover:text-accent-hover transition-colors"
+                        >
+                          <ExternalLink className="w-2.5 h-2.5" />
+                          {offer.source_name ?? offer.channel_url}
+                        </a>
+                      ) : offer.source_name ? (
+                        <span className="text-[10px] text-gray-500">{offer.source_name}</span>
+                      ) : null}
+                      {offer.message_date && (
+                        <span className="text-[10px] text-gray-600">{fmtDate(offer.message_date)}</span>
+                      )}
+                    </div>
                   </div>
-                  <span className="text-[10px] text-gray-600">{Math.round(conf * 100)}%</span>
                 </div>
-
-                {/* diff vs best */}
-                {idx > 0 ? (
-                  <div className="flex items-center gap-0.5 text-[10px] text-negative w-20 justify-end">
-                    <TrendingUp className="w-3 h-3" />
-                    <span>+{fmt(diffFromBest, offer.currency)}</span>
-                    <span className="text-gray-600">({diffPct}%)</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-0.5 text-[10px] text-positive w-20 justify-end">
-                    <TrendingDown className="w-3 h-3" />
-                    <span>лучшая</span>
-                  </div>
-                )}
-
-                {/* price */}
-                <span className={`font-mono font-bold w-28 text-right ${
-                  isWinner ? 'text-positive text-sm' : 'text-gray-300 text-xs'
-                }`}>
-                  {fmt(offer.price, offer.currency)}
-                </span>
-              </div>
+              )}
             </div>
           );
         })}

@@ -152,6 +152,39 @@ export interface PriceListFilters {
   per_page?: number;
 }
 
+// ==================== Offer Detail (with source context) ====================
+export interface OfferDetail {
+  id: number;
+  offer_id: number;
+  supplier_id: number;
+  supplier_name: string;
+  price: number;
+  currency: string;
+  availability: string | null;
+  detected_confidence: number;
+  confidence: number;
+  is_current: boolean;
+  updated_at: string;
+  // Source traceability
+  raw_line: string | null;
+  source_name: string | null;
+  channel_url: string | null;
+  message_date: string | null;
+  raw_message_id: number | null;
+}
+
+export interface ProductDetail {
+  product_id: number;
+  normalized_name: string;
+  category: string;
+  brand: string;
+  model: string;
+  memory: string | null;
+  color: string | null;
+  condition: string;
+  offers: OfferDetail[];
+}
+
 // ==================== Price History Types ====================
 export interface PriceHistoryPoint {
   price: number;
