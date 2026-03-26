@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.source import Source
 from app.models.raw_message import RawMessage
+from app.services.supplier_service import get_or_create_supplier_for_source
 
 router = APIRouter(prefix="/sources", tags=["sources"])
 
@@ -196,6 +197,9 @@ async def get_source(source_id: int, db: AsyncSession = Depends(get_db)):
 async def create_source(data: SourceCreate, db: AsyncSession = Depends(get_db)):
     source = Source(**data.model_dump())
     db.add(source)
+    await db.flush()  # get source.id before auto-supplier
+    # Auto-create supplier if not explicitly provided
+    await get_or_create_supplier_for_source(source, db)
     await db.commit()
     await db.refresh(source)
     return source
@@ -209,6 +213,8 @@ async def update_source(source_id: int, data: SourceUpdate, db: AsyncSession = D
         raise HTTPException(status_code=404, detail="Source not found")
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(source, field, value)
+    # If after update still no supplier_id — auto-create
+    await get_or_create_supplier_for_source(source, db)
     await db.commit()
     await db.refresh(source)
     return source

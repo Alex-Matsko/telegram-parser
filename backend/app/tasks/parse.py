@@ -59,6 +59,7 @@ async def _parse_pending_messages_async() -> dict:
     from app.database import get_isolated_session
     from app.models.raw_message import RawMessage
     from app.models.source import Source
+    from app.services.supplier_service import get_or_create_supplier_for_source
 
     stats = {"processed": 0, "parsed": 0, "failed": 0, "needs_review": 0, "skipped_unchanged": 0}
 
@@ -77,25 +78,25 @@ async def _parse_pending_messages_async() -> dict:
 
         logger.info(f"Parsing {len(messages)} pending messages")
 
-        # Preload all unique sources to avoid N+1
+        # Preload all unique sources
         source_ids = list({msg.source_id for msg in messages})
         sources_result = await session.execute(
             select(Source).where(Source.id.in_(source_ids))
         )
         sources_map = {s.id: s for s in sources_result.scalars().all()}
 
+        # Auto-create suppliers for any source that is missing one
+        for source in sources_map.values():
+            if not source.supplier_id:
+                await get_or_create_supplier_for_source(source, session)
+        # Flush all supplier_id updates in one go
+        await session.flush()
+
         for msg in messages:
             try:
                 source = sources_map.get(msg.source_id)
                 parsing_strategy = source.parsing_strategy if source else "auto"
                 supplier_id = source.supplier_id if source else None
-
-                if not supplier_id:
-                    logger.warning(
-                        f"Source {msg.source_id} has no supplier_id — "
-                        f"message {msg.id} will be marked needs_review. "
-                        f"Please link a Supplier to this Source in /api/sources."
-                    )
 
                 parse_result, skipped = await _process_single_message(
                     session=session,
@@ -137,6 +138,7 @@ async def _parse_single_message_async(message_id: int) -> dict:
     from app.database import get_isolated_session
     from app.models.raw_message import RawMessage
     from app.models.source import Source
+    from app.services.supplier_service import get_or_create_supplier_for_source
 
     async with get_isolated_session() as session:
         result = await session.execute(
@@ -151,6 +153,12 @@ async def _parse_single_message_async(message_id: int) -> dict:
         )
         source = source_result.scalar_one_or_none()
         parsing_strategy = source.parsing_strategy if source else "auto"
+
+        # Auto-create supplier if missing
+        if source and not source.supplier_id:
+            await get_or_create_supplier_for_source(source, session)
+            await session.flush()
+
         supplier_id = source.supplier_id if source else None
 
         status, _ = await _process_single_message(
@@ -178,7 +186,6 @@ async def _process_single_message(
     Process a single raw message through the parsing pipeline.
     Pipeline: regex -> LLM fallback -> normalize -> create offer.
     Returns: (status, skipped_unchanged_count)
-    status is one of: "parsed", "needs_review", "failed".
     """
     from app.models.offer import Offer
     from app.models.price_history import PriceHistory
@@ -200,7 +207,7 @@ async def _process_single_message(
             f"unparsed lines: {len(parse_result.unparsed_lines)}"
         )
 
-    # Step 2: LLM fallback — if regex gave nothing or low confidence
+    # Step 2: LLM fallback
     if parsing_strategy == "auto" and (
         not parsed_offers
         or all(o.confidence < confidence_threshold for o in parsed_offers)
@@ -213,7 +220,7 @@ async def _process_single_message(
     if parsing_strategy == "llm":
         parsed_offers = await parse_with_llm(text)
 
-    # Step 3: No offers at all
+    # Step 3: No offers extracted
     if not parsed_offers:
         message.parse_status = "failed"
         message.parse_error = "No offers could be extracted from the message"
@@ -225,12 +232,11 @@ async def _process_single_message(
     any_needs_review = False
 
     for parsed_offer in parsed_offers:
-        # No supplier — mark needs_review but don't skip silently
         if not supplier_id:
+            # Should not happen after auto-provisioning, but guard anyway
             any_needs_review = True
-            logger.info(
-                f"Offer skipped (no supplier_id on source {message.source_id}): "
-                f"{parsed_offer.model} @ {parsed_offer.price} {parsed_offer.currency}"
+            logger.warning(
+                f"Message {message.id}: supplier_id still missing after auto-provision — needs_review"
             )
             continue
 
@@ -251,7 +257,6 @@ async def _process_single_message(
             any_needs_review = True
             continue
 
-        # Find current offers from same supplier+product
         from sqlalchemy import and_, select
         existing_result = await session.execute(
             select(Offer).where(
@@ -266,7 +271,6 @@ async def _process_single_message(
 
         new_price = Decimal(str(parsed_offer.price))
 
-        # skip_unchanged_prices: if price didn't change — skip offer + history creation
         if skip_unchanged and existing_offers:
             current_price = existing_offers[0].price
             if current_price == new_price:
@@ -274,16 +278,13 @@ async def _process_single_message(
                     f"Skipping unchanged price {new_price} for "
                     f"product={product.id}, supplier={supplier_id}"
                 )
-                # Still mark message as processed so it doesn't stay pending
                 any_success = True
                 skipped_unchanged += 1
                 continue
 
-        # Price changed (or no existing offer) — mark old offers as not current
         for old_offer in existing_offers:
             old_offer.is_current = False
 
-        # Create new offer
         offer = Offer(
             supplier_id=supplier_id,
             product_id=product.id,
@@ -296,7 +297,6 @@ async def _process_single_message(
         session.add(offer)
         await session.flush()
 
-        # Record price history entry
         history_entry = PriceHistory(
             offer_id=offer.id,
             supplier_id=supplier_id,
@@ -321,7 +321,7 @@ async def _process_single_message(
         status = "parsed"
     elif any_needs_review:
         message.parse_status = "needs_review"
-        message.parse_error = "Low confidence, no supplier, or no valid price"
+        message.parse_error = "Low confidence or no valid price"
         message.is_processed = True
         status = "needs_review"
     else:
