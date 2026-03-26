@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.bot_scenarios import router as bot_scenarios_router
 from app.api.history import router as history_router
+from app.api.logs import router as logs_router
 from app.api.price_list import router as price_list_router
 from app.api.sources import router as sources_router
 from app.api.suppliers import router as suppliers_router
@@ -20,6 +21,7 @@ api_router.include_router(sources_router)
 api_router.include_router(suppliers_router)
 api_router.include_router(unresolved_router)
 api_router.include_router(bot_scenarios_router)
+api_router.include_router(logs_router)
 
 
 @api_router.get("/stats", response_model=DashboardStats, tags=["Dashboard"])
@@ -61,7 +63,6 @@ async def get_filters(
         select(distinct(ProductCatalog.condition)).where(ProductCatalog.condition.isnot(None))
     )).scalars().all()
 
-    # Source = supplier: use source_name as display name
     sources = (await session.execute(
         select(Source.id, Source.source_name)
         .where(Source.is_active == True)  # noqa: E712
