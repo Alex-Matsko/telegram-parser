@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 def _run_async(coro):
-    """Run an async coroutine in a fresh event loop (safe for Celery prefork)."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -61,7 +60,7 @@ async def _parse_pending_messages_async() -> dict:
     from app.models.source import Source
     from app.services.supplier_service import get_or_create_supplier_for_source
 
-    stats = {"processed": 0, "parsed": 0, "failed": 0, "needs_review": 0, "skipped_unchanged": 0}
+    stats = {"processed": 0, "parsed": 0, "failed": 0, "needs_review": 0, "skipped_unchanged": 0, "llm_calls": 0}
 
     async with get_isolated_session() as session:
         result = await session.execute(
@@ -78,19 +77,19 @@ async def _parse_pending_messages_async() -> dict:
 
         logger.info(f"Parsing {len(messages)} pending messages")
 
-        # Preload all unique sources
         source_ids = list({msg.source_id for msg in messages})
         sources_result = await session.execute(
             select(Source).where(Source.id.in_(source_ids))
         )
         sources_map = {s.id: s for s in sources_result.scalars().all()}
 
-        # Auto-create suppliers for any source that is missing one
         for source in sources_map.values():
             if not source.supplier_id:
                 await get_or_create_supplier_for_source(source, session)
-        # Flush all supplier_id updates in one go
         await session.flush()
+
+        llm_calls_this_batch = 0
+        max_llm_calls = getattr(settings, "llm_max_per_batch", 20)
 
         for msg in messages:
             try:
@@ -98,17 +97,22 @@ async def _parse_pending_messages_async() -> dict:
                 parsing_strategy = source.parsing_strategy if source else "auto"
                 supplier_id = source.supplier_id if source else None
 
-                parse_result, skipped = await _process_single_message(
+                parse_result, skipped, used_llm = await _process_single_message(
                     session=session,
                     message=msg,
                     parsing_strategy=parsing_strategy,
                     supplier_id=supplier_id,
                     confidence_threshold=settings.parser_confidence_threshold,
                     skip_unchanged=settings.skip_unchanged_prices,
+                    llm_budget=max_llm_calls - llm_calls_this_batch,
                 )
+
+                if used_llm:
+                    llm_calls_this_batch += 1
 
                 stats["processed"] += 1
                 stats["skipped_unchanged"] += skipped
+                stats["llm_calls"] = llm_calls_this_batch
                 if parse_result == "parsed":
                     stats["parsed"] += 1
                 elif parse_result == "needs_review":
@@ -131,7 +135,6 @@ async def _parse_pending_messages_async() -> dict:
 
 
 async def _parse_single_message_async(message_id: int) -> dict:
-    """Parse a single message by ID."""
     from sqlalchemy import select
 
     from app.config import settings
@@ -154,20 +157,20 @@ async def _parse_single_message_async(message_id: int) -> dict:
         source = source_result.scalar_one_or_none()
         parsing_strategy = source.parsing_strategy if source else "auto"
 
-        # Auto-create supplier if missing
         if source and not source.supplier_id:
             await get_or_create_supplier_for_source(source, session)
             await session.flush()
 
         supplier_id = source.supplier_id if source else None
 
-        status, _ = await _process_single_message(
+        status, _, _ = await _process_single_message(
             session=session,
             message=message,
             parsing_strategy=parsing_strategy,
             supplier_id=supplier_id,
             confidence_threshold=settings.parser_confidence_threshold,
             skip_unchanged=settings.skip_unchanged_prices,
+            llm_budget=1,
         )
 
         await session.commit()
@@ -181,11 +184,11 @@ async def _process_single_message(
     supplier_id: int | None,
     confidence_threshold: float,
     skip_unchanged: bool = True,
-) -> tuple[str, int]:
+    llm_budget: int = 1,
+) -> tuple[str, int, bool]:
     """
-    Process a single raw message through the parsing pipeline.
-    Pipeline: regex -> LLM fallback -> normalize -> create offer.
-    Returns: (status, skipped_unchanged_count)
+    Returns: (status, skipped_unchanged_count, used_llm)
+    llm_budget=0 means skip LLM entirely for this message (mark needs_review).
     """
     from app.models.offer import Offer
     from app.models.price_history import PriceHistory
@@ -196,6 +199,7 @@ async def _process_single_message(
     text = message.message_text
     offers_created = 0
     skipped_unchanged = 0
+    used_llm = False
 
     # Step 1: Regex parser
     parsed_offers = []
@@ -207,25 +211,45 @@ async def _process_single_message(
             f"unparsed lines: {len(parse_result.unparsed_lines)}"
         )
 
-    # Step 2: LLM fallback
-    if parsing_strategy == "auto" and (
-        not parsed_offers
-        or all(o.confidence < confidence_threshold for o in parsed_offers)
-    ):
+    # Step 2: LLM fallback (only if budget allows)
+    needs_llm = (
+        parsing_strategy == "auto"
+        and (
+            not parsed_offers
+            or all(o.confidence < confidence_threshold for o in parsed_offers)
+        )
+    )
+
+    if needs_llm:
+        if llm_budget <= 0:
+            logger.debug(f"LLM budget exhausted, skipping message {message.id} — needs_review")
+            message.parse_status = "needs_review"
+            message.parse_error = "LLM budget exhausted for this batch"
+            message.is_processed = True
+            return "needs_review", 0, False
+
         logger.debug(f"Falling back to LLM for message {message.id}")
         llm_offers = await parse_with_llm(text)
+        used_llm = True
         if llm_offers:
             parsed_offers = llm_offers
 
     if parsing_strategy == "llm":
-        parsed_offers = await parse_with_llm(text)
+        if llm_budget > 0:
+            parsed_offers = await parse_with_llm(text)
+            used_llm = True
+        else:
+            message.parse_status = "needs_review"
+            message.parse_error = "LLM budget exhausted for this batch"
+            message.is_processed = True
+            return "needs_review", 0, False
 
     # Step 3: No offers extracted
     if not parsed_offers:
         message.parse_status = "failed"
         message.parse_error = "No offers could be extracted from the message"
         message.is_processed = True
-        return "failed", 0
+        return "failed", 0, used_llm
 
     # Step 4: Process each parsed offer
     any_success = False
@@ -233,11 +257,8 @@ async def _process_single_message(
 
     for parsed_offer in parsed_offers:
         if not supplier_id:
-            # Should not happen after auto-provisioning, but guard anyway
             any_needs_review = True
-            logger.warning(
-                f"Message {message.id}: supplier_id still missing after auto-provision — needs_review"
-            )
+            logger.warning(f"Message {message.id}: supplier_id missing — needs_review")
             continue
 
         if parsed_offer.price is None or parsed_offer.price <= 0:
@@ -245,14 +266,12 @@ async def _process_single_message(
             any_needs_review = True
             continue
 
-        # Normalize and match to product catalog
         product, match_confidence = await normalize_and_match(parsed_offer, session)
 
         if product is None or match_confidence < confidence_threshold:
             logger.debug(
                 f"Offer needs review: product={product}, "
-                f"match_confidence={match_confidence:.2f}, "
-                f"threshold={confidence_threshold}"
+                f"match_confidence={match_confidence:.2f}"
             )
             any_needs_review = True
             continue
@@ -274,10 +293,7 @@ async def _process_single_message(
         if skip_unchanged and existing_offers:
             current_price = existing_offers[0].price
             if current_price == new_price:
-                logger.debug(
-                    f"Skipping unchanged price {new_price} for "
-                    f"product={product.id}, supplier={supplier_id}"
-                )
+                logger.debug(f"Skipping unchanged price {new_price}")
                 any_success = True
                 skipped_unchanged += 1
                 continue
@@ -310,8 +326,7 @@ async def _process_single_message(
         any_success = True
         logger.info(
             f"Created offer: {parsed_offer.model} {parsed_offer.memory} "
-            f"@ {parsed_offer.price} {parsed_offer.currency} "
-            f"(supplier={supplier_id}, product={product.id})"
+            f"@ {parsed_offer.price} {parsed_offer.currency}"
         )
 
     # Step 5: Final status
@@ -331,4 +346,4 @@ async def _process_single_message(
         status = "failed"
 
     await session.flush()
-    return status, skipped_unchanged
+    return status, skipped_unchanged, used_llm

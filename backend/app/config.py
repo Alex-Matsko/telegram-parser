@@ -28,19 +28,22 @@ class Settings(BaseSettings):
     telegram_api_hash: str = ""
     telegram_session_string: str = ""
 
-    # LLM — Groq (all models verified active as of 2026-03)
-    # Override any of these in .env
-    # Active Groq models: https://console.groq.com/docs/models
+    # LLM — Groq only, verified active models as of 2026-03
+    # Full list: https://console.groq.com/docs/models
     llm_api_url: str = "https://api.groq.com/openai/v1"
     llm_api_key: str = ""
     llm_model: str = "llama-3.3-70b-versatile"
 
-    # Fallback chain — all active on Groq free tier as of 2026-03:
-    # llama-3.1-8b-instant  — fast, 8B
-    # gemma2-9b-it          — Google Gemma 2 9B
-    # mistral-saba-24b      — Mistral 24B (preview)
-    # compound-beta-mini    — Groq compound model
-    llm_fallback_models: str = "llama-3.1-8b-instant,gemma2-9b-it,mistral-saba-24b,compound-beta-mini"
+    # Fallback chain (all active on Groq free tier, 2026-03):
+    #   llama-3.1-8b-instant  — replaces deprecated gemma2-9b-it
+    #   qwen/qwen3-32b        — replaces deprecated mistral-saba-24b
+    #   compound-beta-mini    — Groq compound model
+    llm_fallback_models: str = "llama-3.1-8b-instant,qwen/qwen3-32b,compound-beta-mini"
+
+    # Max LLM calls per parse batch (protects against rate limit exhaustion).
+    # Groq free = 30 rpm. With 2s delay, 30 calls = 60s = safe.
+    # Messages beyond this limit are left as needs_review for next run.
+    llm_max_per_batch: int = 20
 
     # App
     secret_key: str = "changeme"
@@ -48,7 +51,7 @@ class Settings(BaseSettings):
     parser_confidence_threshold: float = 0.5
     skip_unchanged_prices: bool = True
 
-    # Rate limiting: Groq free = 30 rpm, safe delay = 2s
+    # Rate limiting: 2s between calls = 30 rpm max
     llm_rate_limit_delay: float = 2.0
     llm_concurrency: int = 1
 
