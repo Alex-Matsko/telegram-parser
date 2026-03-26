@@ -1,8 +1,15 @@
 """
 LLM-based fallback parser for complex/ambiguous price messages.
-Uses an OpenAI-compatible API to extract structured offer data.
 
-System prompt fully aligned with ТЗ section 18.
+Supports any OpenAI-compatible API.
+Recommended free provider: Google Gemini
+  LLM_API_URL=https://generativelanguage.googleapis.com/v1beta/openai
+  LLM_API_KEY=<your Gemini API key from https://aistudio.google.com/apikey>
+  LLM_MODEL=gemini-2.0-flash   # free tier: 15 rpm / 1500 rpd
+
+Alternative free providers (also OpenAI-compatible):
+  - Groq         https://console.groq.com         llama-3.3-70b-versatile
+  - OpenRouter   https://openrouter.ai             google/gemini-2.0-flash-exp:free
 """
 import json
 import logging
@@ -15,7 +22,6 @@ from app.parser.regex_parser import ParsedOffer
 
 logger = logging.getLogger(__name__)
 
-# ТЗ section 18: system prompt for LLM parsing module
 SYSTEM_PROMPT = """Ты — модуль нормализации прайсов электроники из Telegram-сообщений.
 
 Твоя задача:
@@ -39,6 +45,7 @@ SYSTEM_PROMPT = """Ты — модуль нормализации прайсов
 
 Правила нормализации:
 - 15 pm, 15 pro max, iphone 15pm — варианты iPhone 15 Pro Max.
+- 17 pro 256 — iPhone 17 Pro, 256GB.
 - nat / natural — Natural Titanium, если контекст указывает на Apple Pro-модель.
 - Если валюта не указана явно, пытаться определить по контексту, иначе "currency": "RUB".
 - Числа рядом с моделью не считать ценой, если они похожи на объём памяти (32/64/128/256/512/1024).
@@ -52,7 +59,7 @@ SYSTEM_PROMPT = """Ты — модуль нормализации прайсов
 line — продуктовая линейка: iPhone / AirPods / Apple Watch / MacBook / iPad / Mac.
 category — одно из: smartphone / headphones / watch / laptop / tablet / desktop.
 
-Пример входа: "15 Pro Max 256 nat - 915$"
+Пример входа: "17 pro 256"
 Пример выхода:
 {
   "items": [
@@ -60,15 +67,15 @@ category — одно из: smartphone / headphones / watch / laptop / tablet / 
       "category": "smartphone",
       "brand": "Apple",
       "line": "iPhone",
-      "model": "iPhone 15 Pro Max",
+      "model": "iPhone 17 Pro",
       "memory": "256GB",
-      "color": "Natural Titanium",
+      "color": null,
       "condition": "new",
       "sim_type": null,
-      "price": 915,
-      "currency": "USD",
-      "availability": "in_stock",
-      "confidence": 0.95,
+      "price": null,
+      "currency": "RUB",
+      "availability": null,
+      "confidence": 0.85,
       "needs_review": false
     }
   ]
@@ -114,7 +121,6 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
 
         parsed = json.loads(content)
 
-        # Support both {"items": [...]} and bare [...]
         if isinstance(parsed, dict) and "items" in parsed:
             offers_raw = parsed["items"]
         elif isinstance(parsed, list):
@@ -165,8 +171,6 @@ def _dict_to_parsed_offer(data: dict) -> Optional[ParsedOffer]:
 
         confidence = float(data.get("confidence", 0.6))
         needs_review = data.get("needs_review", False)
-
-        # If LLM itself flagged needs_review, lower confidence
         if needs_review:
             confidence = min(confidence, 0.4)
 
