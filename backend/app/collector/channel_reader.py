@@ -23,9 +23,6 @@ from app.models.source import Source
 
 logger = logging.getLogger(__name__)
 
-# Default wait after triggering a bot scenario before reading its response
-_BOT_POST_SCENARIO_WAIT = 5
-
 
 def _ensure_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
@@ -34,12 +31,6 @@ def _ensure_utc(dt: datetime) -> datetime:
 
 
 async def _resolve_bot(client: TelegramClient, source: Source):
-    """
-    Resolve a bot entity.
-    Strategy:
-    1. Session cache
-    2. get_entity(@source_name)
-    """
     try:
         entity = await client.get_input_entity(PeerUser(source.telegram_id))
         logger.info(f"[bot-resolve] id={source.telegram_id} found in session cache")
@@ -141,34 +132,28 @@ async def _resolve_entity(client: TelegramClient, source: Source):
     return await client.get_entity(source.telegram_id)
 
 
-async def _trigger_bot_scenario(
+async def _run_bot_scenario_if_set(
     client: TelegramClient,
     entity,
     source: Source,
 ) -> None:
     """
-    If the source has a bot_scenario attached, execute it.
-    Falls back to sending 'Прайс' if no scenario is configured.
-    Always waits _BOT_POST_SCENARIO_WAIT seconds after triggering.
+    Execute the bot scenario only if one is explicitly assigned to this source.
+    If no scenario is set — do nothing (passive read).
     """
     scenario = getattr(source, "bot_scenario", None)
 
-    if scenario and scenario.steps_json:
-        steps = scenario.steps_json
+    if not scenario or not scenario.steps_json:
         logger.info(
-            f"[{source.source_name}] Running bot scenario "
-            f"'{scenario.scenario_name}' ({len(steps)} steps)"
+            f"[{source.source_name}] No scenario assigned — reading passively"
         )
-        await run_scenario(client, entity, steps, source_name=source.source_name)
-    else:
-        # No scenario configured — use simple default: send 'Прайс'
-        logger.info(
-            f"[{source.source_name}] No scenario configured, "
-            f"sending default trigger 'Прайс'"
-        )
-        await client.send_message(entity, "Прайс")
-        import asyncio
-        await asyncio.sleep(_BOT_POST_SCENARIO_WAIT)
+        return
+
+    logger.info(
+        f"[{source.source_name}] Running bot scenario "
+        f"'{scenario.scenario_name}' ({len(scenario.steps_json)} steps)"
+    )
+    await run_scenario(client, entity, scenario.steps_json, source_name=source.source_name)
 
 
 async def read_channel_messages(
@@ -208,9 +193,9 @@ async def read_channel_messages(
             f"type={type(entity).__name__} | id={entity_id} | title={entity_title}"
         )
 
-        # For bots: trigger scenario/command to get fresh price list
+        # For bots: run assigned scenario (if any) before reading
         if source_type == "bot":
-            await _trigger_bot_scenario(client, entity, source)
+            await _run_bot_scenario_if_set(client, entity, source)
 
         messages: list[Message] = []
 
