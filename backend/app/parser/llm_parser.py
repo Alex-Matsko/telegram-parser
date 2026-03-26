@@ -4,12 +4,13 @@ LLM-based fallback parser for complex/ambiguous price messages.
 Supports any OpenAI-compatible API.
 Recommended free provider: OpenRouter
   LLM_API_URL=https://openrouter.ai/api/v1
-  LLM_API_KEY=<your key from https://openrouter.ai/keys>
+  LLM_API_KEY=sk-or-v1-...
   LLM_MODEL=google/gemma-3-27b-it:free
   LLM_FALLBACK_MODELS=meta-llama/llama-3.3-70b-instruct:free,mistralai/mistral-7b-instruct:free
 
-On 429 / 404 the parser automatically tries each model in LLM_FALLBACK_MODELS
-before giving up.
+Alternative: Google Gemini direct
+  LLM_API_URL=https://generativelanguage.googleapis.com/v1beta/openai
+  LLM_MODEL=gemini-2.0-flash
 """
 import json
 import logging
@@ -22,33 +23,29 @@ from app.parser.regex_parser import ParsedOffer
 
 logger = logging.getLogger(__name__)
 
+# Status codes that should trigger a fallback to next model
+_FALLBACK_STATUS_CODES = {429, 404, 503, 502}
+
 SYSTEM_PROMPT = """Ты — модуль нормализации прайсов электроники из Telegram-сообщений.
 
 Твоя задача:
 1. Проанализировать входной текст сообщения.
 2. Выделить товарные позиции.
 3. Для каждой позиции извлечь:
-   - category
-   - brand
-   - model
-   - memory
-   - color
-   - condition
-   - price
-   - currency
-   - availability
+   - category, brand, model, memory, color, condition, price, currency, availability
 4. Привести данные к нормализованному виду.
 5. Вернуть результат строго в JSON.
 6. Если уверенность низкая, установить "needs_review": true.
-7. Не додумывать данные, если их нет явно.
-8. Если в одном сообщении несколько позиций — вернуть массив внутри поля "items".
+7. Не додумывать данные, если их нет явно или они не следуют надёжно из контекста.
+8. Если в одном сообщении несколько позиций — вернуть массив объектов внутри поля "items".
 
 Правила нормализации:
 - 15 pm, 15 pro max, iphone 15pm — варианты iPhone 15 Pro Max.
 - 17 pro 256 — iPhone 17 Pro, 256GB.
 - nat / natural — Natural Titanium, если контекст указывает на Apple Pro-модель.
-- Если валюта не указана явно, пытаться определить по контексту, иначе "currency": "RUB".
+- Если валюта не указана, пытаться определить по контексту, иначе "currency": "RUB".
 - Числа рядом с моделью не считать ценой, если они похожи на объём памяти (32/64/128/256/512/1024).
+- Строки-заголовки, даты, подписи — игнорировать.
 - Состояние: new / used / refurbished. По умолчанию new.
 - Валюта: RUB / USD / EUR.
 - Память: нормализовать к формату 256GB / 1TB.
@@ -82,13 +79,13 @@ category — одно из: smartphone / headphones / watch / laptop / tablet / 
 Отвечай ТОЛЬКО валидным JSON, без пояснений и текста снаружи.
 """
 
-# HTTP status codes that warrant trying the next model in the fallback chain
-_RETRY_ON_CODES = {429, 404, 503, 502}
 
-
-async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> httpx.Response:
-    """Make a single chat/completions request for the given model."""
-    return await client.post(
+async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> list[ParsedOffer]:
+    """
+    Make a single LLM API call for the given model.
+    Raises httpx.HTTPStatusError on non-2xx so callers can handle fallback.
+    """
+    response = await client.post(
         f"{settings.llm_api_url}/chat/completions",
         headers={
             "Authorization": f"Bearer {settings.llm_api_key}",
@@ -104,77 +101,83 @@ async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> httpx
             "max_tokens": 2000,
         },
     )
+    response.raise_for_status()
+
+    data = response.json()
+    content = data["choices"][0]["message"]["content"].strip()
+    content = _extract_json(content)
+    parsed = json.loads(content)
+
+    if isinstance(parsed, dict) and "items" in parsed:
+        offers_raw = parsed["items"]
+    elif isinstance(parsed, list):
+        offers_raw = parsed
+    else:
+        logger.warning(f"LLM ({model}) returned unexpected structure: {type(parsed)}")
+        return []
+
+    return [o for o in (_dict_to_parsed_offer(i) for i in offers_raw) if o]
 
 
 async def parse_with_llm(text: str) -> list[ParsedOffer]:
     """
     Parse a message using an LLM with automatic model fallback.
 
-    Tries settings.llm_model first, then each model in
-    settings.llm_fallback_models_list on 429 / 404 / 502 / 503.
-    Returns a list of ParsedOffer objects, or [] on total failure.
+    Tries models in order:
+      1. settings.llm_model          (primary)
+      2. settings.llm_fallback_models (comma-separated list from .env)
+
+    On 429/404/502/503 automatically moves to next model.
+    Returns empty list only when ALL models fail.
     """
     if not settings.llm_api_key:
         logger.warning("LLM API key not configured, skipping LLM parsing")
         return []
 
-    models_to_try = [settings.llm_model] + settings.llm_fallback_models_list
+    # Build deduplicated model chain
+    seen: set[str] = set()
+    models: list[str] = []
+    for m in [settings.llm_model] + settings.llm_fallback_models_list:
+        if m not in seen:
+            seen.add(m)
+            models.append(m)
+
+    last_error: Exception | None = None
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        for idx, model in enumerate(models_to_try):
+        for model in models:
             try:
-                response = await _call_model(client, model, text)
-
-                if response.status_code in _RETRY_ON_CODES:
-                    logger.warning(
-                        f"[LLM] Model {model!r} returned {response.status_code}, "
-                        f"trying next fallback ..."
-                    )
-                    continue
-
-                response.raise_for_status()
-
-                if idx > 0:
-                    logger.info(f"[LLM] Using fallback model: {model!r}")
-
-                data = response.json()
-                content = data["choices"][0]["message"]["content"].strip()
-                content = _extract_json(content)
-                parsed = json.loads(content)
-
-                if isinstance(parsed, dict) and "items" in parsed:
-                    offers_raw = parsed["items"]
-                elif isinstance(parsed, list):
-                    offers_raw = parsed
-                else:
-                    logger.warning(f"[LLM] Unexpected structure from {model!r}: {type(parsed)}")
-                    return []
-
-                offers = [o for o in (_dict_to_parsed_offer(i) for i in offers_raw) if o]
-                logger.info(f"[LLM] Parsed {len(offers)} offer(s) via {model!r}")
+                offers = await _call_model(client, model, text)
+                logger.info(f"LLM ({model}) parsed {len(offers)} offer(s)")
                 return offers
 
             except httpx.HTTPStatusError as e:
-                if e.response.status_code in _RETRY_ON_CODES:
+                status = e.response.status_code
+                if status in _FALLBACK_STATUS_CODES:
                     logger.warning(
-                        f"[LLM] Model {model!r} HTTP {e.response.status_code}, "
-                        f"trying next fallback ..."
+                        f"LLM model '{model}' returned {status} — trying next fallback"
                     )
+                    last_error = e
                     continue
+                # Non-retriable (e.g. 401 bad key) — stop immediately
                 logger.error(
-                    f"[LLM] HTTP error from {model!r}: "
-                    f"{e.response.status_code} - {e.response.text[:200]}"
+                    f"LLM non-retriable HTTP {status} with model '{model}': "
+                    f"{e.response.text[:200]}"
                 )
                 return []
+
             except json.JSONDecodeError as e:
-                logger.error(f"[LLM] JSON decode error from {model!r}: {e}")
-                return []
+                logger.error(f"LLM ({model}) invalid JSON: {e}")
+                last_error = e
+                continue
+
             except Exception as e:
-                logger.error(f"[LLM] Unexpected error from {model!r}: {e}")
-                return []
+                logger.error(f"LLM ({model}) unexpected error: {e}")
+                last_error = e
+                continue
 
     logger.error(
-        f"[LLM] All models exhausted ({len(models_to_try)} tried), giving up."
+        f"All {len(models)} LLM model(s) exhausted. Last error: {last_error}"
     )
     return []
 
@@ -196,9 +199,12 @@ def _dict_to_parsed_offer(data: dict) -> Optional[ParsedOffer]:
         price = data.get("price")
         if price is not None:
             price = float(price)
+
         confidence = float(data.get("confidence", 0.6))
-        if data.get("needs_review", False):
+        needs_review = data.get("needs_review", False)
+        if needs_review:
             confidence = min(confidence, 0.4)
+
         return ParsedOffer(
             model=data.get("model"),
             line=data.get("line"),
@@ -214,5 +220,5 @@ def _dict_to_parsed_offer(data: dict) -> Optional[ParsedOffer]:
             raw_line=str(data),
         )
     except Exception as e:
-        logger.error(f"[LLM] Failed to convert result to ParsedOffer: {e}")
+        logger.error(f"Failed to convert LLM result to ParsedOffer: {e}")
         return None
