@@ -1,13 +1,28 @@
 """
 Comprehensive synonym dictionaries for multi-brand products.
-Used by the regex parser and normalizer.
 """
 
-# --------------------------------------------------------------------------
-# MODEL ALIASES  →  (line, model, category)
-# Key format: lowercase, spaces only (no punctuation except where part of name)
-# --------------------------------------------------------------------------
 MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
+
+    # ===== APPLE: iPhone 17 =====
+    "iphone 17 pro max": ("iPhone", "iPhone 17 Pro Max", "smartphone"),
+    "17 pro max":        ("iPhone", "iPhone 17 Pro Max", "smartphone"),
+    "17pm":              ("iPhone", "iPhone 17 Pro Max", "smartphone"),
+    "17 pm":             ("iPhone", "iPhone 17 Pro Max", "smartphone"),
+    "17promax":          ("iPhone", "iPhone 17 Pro Max", "smartphone"),
+    "17 promax":         ("iPhone", "iPhone 17 Pro Max", "smartphone"),
+    "iphone 17 pro":     ("iPhone", "iPhone 17 Pro",     "smartphone"),
+    "17 pro":            ("iPhone", "iPhone 17 Pro",     "smartphone"),
+    "17p":               ("iPhone", "iPhone 17 Pro",     "smartphone"),
+    "iphone 17 air":     ("iPhone", "iPhone 17 Air",     "smartphone"),
+    "17 air":            ("iPhone", "iPhone 17 Air",     "smartphone"),
+    "iphone 17 plus":    ("iPhone", "iPhone 17 Plus",    "smartphone"),
+    "17 plus":           ("iPhone", "iPhone 17 Plus",    "smartphone"),
+    "17+":               ("iPhone", "iPhone 17 Plus",    "smartphone"),
+    "iphone 17e":        ("iPhone", "iPhone 17e",        "smartphone"),
+    "17e":               ("iPhone", "iPhone 17e",        "smartphone"),
+    "iphone 17":         ("iPhone", "iPhone 17",         "smartphone"),
+    "iphone17":          ("iPhone", "iPhone 17",         "smartphone"),
 
     # ===== APPLE: iPhone 16 =====
     "iphone 16 pro max": ("iPhone", "iPhone 16 Pro Max", "smartphone"),
@@ -23,6 +38,8 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "iphone 16 plus":    ("iPhone", "iPhone 16 Plus",    "smartphone"),
     "16 plus":           ("iPhone", "iPhone 16 Plus",    "smartphone"),
     "16+":               ("iPhone", "iPhone 16 Plus",    "smartphone"),
+    "iphone 16e":        ("iPhone", "iPhone 16e",        "smartphone"),
+    "16e":               ("iPhone", "iPhone 16e",        "smartphone"),
     "iphone 16":         ("iPhone", "iPhone 16",         "smartphone"),
     "iphone16":          ("iPhone", "iPhone 16",         "smartphone"),
 
@@ -115,27 +132,33 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "airpods max":          ("AirPods", "AirPods Max",         "headphones"),
 
     # ===== APPLE: Apple Watch =====
-    "apple watch ultra 2":  ("Apple Watch", "Apple Watch Ultra 2",  "watch"),
-    "aw ultra 2":           ("Apple Watch", "Apple Watch Ultra 2",  "watch"),
-    "watch ultra 2":        ("Apple Watch", "Apple Watch Ultra 2",  "watch"),
-    "awu2":                 ("Apple Watch", "Apple Watch Ultra 2",  "watch"),
-    "apple watch ultra":    ("Apple Watch", "Apple Watch Ultra",    "watch"),
-    "aw ultra":             ("Apple Watch", "Apple Watch Ultra",    "watch"),
-    "watch ultra":          ("Apple Watch", "Apple Watch Ultra",    "watch"),
-    "apple watch series 10":("Apple Watch", "Apple Watch Series 10","watch"),
-    "apple watch s10":      ("Apple Watch", "Apple Watch Series 10","watch"),
-    "aw s10":               ("Apple Watch", "Apple Watch Series 10","watch"),
-    "aws10":                ("Apple Watch", "Apple Watch Series 10","watch"),
-    "watch 10":             ("Apple Watch", "Apple Watch Series 10","watch"),
-    "apple watch series 9": ("Apple Watch", "Apple Watch Series 9", "watch"),
-    "apple watch s9":       ("Apple Watch", "Apple Watch Series 9", "watch"),
-    "aw s9":                ("Apple Watch", "Apple Watch Series 9", "watch"),
-    "aws9":                 ("Apple Watch", "Apple Watch Series 9", "watch"),
-    "watch 9":              ("Apple Watch", "Apple Watch Series 9", "watch"),
-    "apple watch se 2":     ("Apple Watch", "Apple Watch SE 2",     "watch"),
-    "aw se 2":              ("Apple Watch", "Apple Watch SE 2",     "watch"),
-    "apple watch se":       ("Apple Watch", "Apple Watch SE 2",     "watch"),
-    "aw se":                ("Apple Watch", "Apple Watch SE 2",     "watch"),
+    "apple watch ultra 2":   ("Apple Watch", "Apple Watch Ultra 2",   "watch"),
+    "aw ultra 2":            ("Apple Watch", "Apple Watch Ultra 2",   "watch"),
+    "watch ultra 2":         ("Apple Watch", "Apple Watch Ultra 2",   "watch"),
+    "awu2":                  ("Apple Watch", "Apple Watch Ultra 2",   "watch"),
+    "apple watch ultra":     ("Apple Watch", "Apple Watch Ultra",     "watch"),
+    "aw ultra":              ("Apple Watch", "Apple Watch Ultra",     "watch"),
+    "watch ultra":           ("Apple Watch", "Apple Watch Ultra",     "watch"),
+    "apple watch series 11": ("Apple Watch", "Apple Watch Series 11", "watch"),
+    "apple watch s11":       ("Apple Watch", "Apple Watch Series 11", "watch"),
+    "aw s11":                ("Apple Watch", "Apple Watch Series 11", "watch"),
+    "aws11":                 ("Apple Watch", "Apple Watch Series 11", "watch"),
+    "watch s11":             ("Apple Watch", "Apple Watch Series 11", "watch"),
+    "s11":                   ("Apple Watch", "Apple Watch Series 11", "watch"),
+    "apple watch series 10": ("Apple Watch", "Apple Watch Series 10", "watch"),
+    "apple watch s10":       ("Apple Watch", "Apple Watch Series 10", "watch"),
+    "aw s10":                ("Apple Watch", "Apple Watch Series 10", "watch"),
+    "aws10":                 ("Apple Watch", "Apple Watch Series 10", "watch"),
+    "watch 10":              ("Apple Watch", "Apple Watch Series 10", "watch"),
+    "apple watch series 9":  ("Apple Watch", "Apple Watch Series 9",  "watch"),
+    "apple watch s9":        ("Apple Watch", "Apple Watch Series 9",  "watch"),
+    "aw s9":                 ("Apple Watch", "Apple Watch Series 9",  "watch"),
+    "aws9":                  ("Apple Watch", "Apple Watch Series 9",  "watch"),
+    "watch 9":               ("Apple Watch", "Apple Watch Series 9",  "watch"),
+    "apple watch se 2":      ("Apple Watch", "Apple Watch SE 2",      "watch"),
+    "aw se 2":               ("Apple Watch", "Apple Watch SE 2",      "watch"),
+    "apple watch se":        ("Apple Watch", "Apple Watch SE 2",      "watch"),
+    "aw se":                 ("Apple Watch", "Apple Watch SE 2",      "watch"),
 
     # ===== APPLE: MacBook =====
     "macbook pro 16":   ("MacBook", "MacBook Pro 16", "laptop"),
@@ -177,72 +200,68 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "mac studio":         ("Mac", "Mac Studio",         "desktop"),
 
     # ===== APPLE: Apple TV =====
-    "apple tv 4k":        ("Apple TV", "Apple TV 4K",   "tv"),
-    "apple tv":           ("Apple TV", "Apple TV",       "tv"),
+    "apple tv 4k":  ("Apple TV", "Apple TV 4K", "tv"),
+    "apple tv":     ("Apple TV", "Apple TV",     "tv"),
 
     # ===== SAMSUNG: Galaxy S26 =====
-    "galaxy s26 ultra":   ("Galaxy", "Galaxy S26 Ultra",  "smartphone"),
-    "galaxy s26+":        ("Galaxy", "Galaxy S26 Plus",   "smartphone"),
-    "galaxy s26 plus":    ("Galaxy", "Galaxy S26 Plus",   "smartphone"),
-    "galaxy s26":         ("Galaxy", "Galaxy S26",        "smartphone"),
-    "s26 ultra":          ("Galaxy", "Galaxy S26 Ultra",  "smartphone"),
-    "s26+":               ("Galaxy", "Galaxy S26 Plus",   "smartphone"),
-    "s26 plus":           ("Galaxy", "Galaxy S26 Plus",   "smartphone"),
-    "s26":                ("Galaxy", "Galaxy S26",        "smartphone"),
+    "galaxy s26 ultra":  ("Galaxy", "Galaxy S26 Ultra", "smartphone"),
+    "galaxy s26+":       ("Galaxy", "Galaxy S26 Plus",  "smartphone"),
+    "galaxy s26 plus":   ("Galaxy", "Galaxy S26 Plus",  "smartphone"),
+    "galaxy s26":        ("Galaxy", "Galaxy S26",       "smartphone"),
+    "s26 ultra":         ("Galaxy", "Galaxy S26 Ultra", "smartphone"),
+    "s26+":              ("Galaxy", "Galaxy S26 Plus",  "smartphone"),
+    "s26 plus":          ("Galaxy", "Galaxy S26 Plus",  "smartphone"),
+    "s26":               ("Galaxy", "Galaxy S26",       "smartphone"),
 
     # ===== SAMSUNG: Galaxy S25 =====
-    "galaxy s25 ultra":   ("Galaxy", "Galaxy S25 Ultra",  "smartphone"),
-    "galaxy s25 fe":      ("Galaxy", "Galaxy S25 FE",     "smartphone"),
-    "galaxy s25 edge":    ("Galaxy", "Galaxy S25 Edge",   "smartphone"),
-    "galaxy s25+":        ("Galaxy", "Galaxy S25 Plus",   "smartphone"),
-    "galaxy s25 plus":    ("Galaxy", "Galaxy S25 Plus",   "smartphone"),
-    "galaxy s25":         ("Galaxy", "Galaxy S25",        "smartphone"),
-    "s25 ultra":          ("Galaxy", "Galaxy S25 Ultra",  "smartphone"),
-    "s25 fe":             ("Galaxy", "Galaxy S25 FE",     "smartphone"),
-    "s25+":               ("Galaxy", "Galaxy S25 Plus",   "smartphone"),
-    "s25 plus":           ("Galaxy", "Galaxy S25 Plus",   "smartphone"),
-    "s25":                ("Galaxy", "Galaxy S25",        "smartphone"),
+    "galaxy s25 ultra":  ("Galaxy", "Galaxy S25 Ultra", "smartphone"),
+    "galaxy s25 fe":     ("Galaxy", "Galaxy S25 FE",    "smartphone"),
+    "galaxy s25 edge":   ("Galaxy", "Galaxy S25 Edge",  "smartphone"),
+    "galaxy s25+":       ("Galaxy", "Galaxy S25 Plus",  "smartphone"),
+    "galaxy s25 plus":   ("Galaxy", "Galaxy S25 Plus",  "smartphone"),
+    "galaxy s25":        ("Galaxy", "Galaxy S25",       "smartphone"),
+    "s25 ultra":         ("Galaxy", "Galaxy S25 Ultra", "smartphone"),
+    "s25 fe":            ("Galaxy", "Galaxy S25 FE",    "smartphone"),
+    "s25+":              ("Galaxy", "Galaxy S25 Plus",  "smartphone"),
+    "s25":               ("Galaxy", "Galaxy S25",       "smartphone"),
 
     # ===== SAMSUNG: Galaxy S24 =====
-    "galaxy s24 ultra":   ("Galaxy", "Galaxy S24 Ultra",  "smartphone"),
-    "galaxy s24 fe":      ("Galaxy", "Galaxy S24 FE",     "smartphone"),
-    "galaxy s24+":        ("Galaxy", "Galaxy S24 Plus",   "smartphone"),
-    "galaxy s24 plus":    ("Galaxy", "Galaxy S24 Plus",   "smartphone"),
-    "galaxy s24":         ("Galaxy", "Galaxy S24",        "smartphone"),
-    "s24 ultra":          ("Galaxy", "Galaxy S24 Ultra",  "smartphone"),
-    "s24 fe":             ("Galaxy", "Galaxy S24 FE",     "smartphone"),
-    "s24+":               ("Galaxy", "Galaxy S24 Plus",   "smartphone"),
-    "s24":                ("Galaxy", "Galaxy S24",        "smartphone"),
+    "galaxy s24 ultra":  ("Galaxy", "Galaxy S24 Ultra", "smartphone"),
+    "galaxy s24 fe":     ("Galaxy", "Galaxy S24 FE",    "smartphone"),
+    "galaxy s24+":       ("Galaxy", "Galaxy S24 Plus",  "smartphone"),
+    "galaxy s24":        ("Galaxy", "Galaxy S24",       "smartphone"),
+    "s24 ultra":         ("Galaxy", "Galaxy S24 Ultra", "smartphone"),
+    "s24 fe":            ("Galaxy", "Galaxy S24 FE",    "smartphone"),
+    "s24+":              ("Galaxy", "Galaxy S24 Plus",  "smartphone"),
+    "s24":               ("Galaxy", "Galaxy S24",       "smartphone"),
 
     # ===== SAMSUNG: Galaxy A-series =====
-    "galaxy a56 5g":      ("Galaxy", "Galaxy A56 5G",     "smartphone"),
-    "galaxy a56":         ("Galaxy", "Galaxy A56",        "smartphone"),
-    "galaxy a36 5g":      ("Galaxy", "Galaxy A36 5G",     "smartphone"),
-    "galaxy a36":         ("Galaxy", "Galaxy A36",        "smartphone"),
-    "galaxy a26 5g":      ("Galaxy", "Galaxy A26 5G",     "smartphone"),
-    "galaxy a26":         ("Galaxy", "Galaxy A26",        "smartphone"),
-    "galaxy a17":         ("Galaxy", "Galaxy A17",        "smartphone"),
-    "galaxy a16 5g":      ("Galaxy", "Galaxy A16 5G",     "smartphone"),
-    "galaxy a16":         ("Galaxy", "Galaxy A16",        "smartphone"),
-    "galaxy a15 5g":      ("Galaxy", "Galaxy A15 5G",     "smartphone"),
-    "galaxy a15":         ("Galaxy", "Galaxy A15",        "smartphone"),
-    "galaxy a55 5g":      ("Galaxy", "Galaxy A55 5G",     "smartphone"),
-    "galaxy a55":         ("Galaxy", "Galaxy A55",        "smartphone"),
-    "galaxy a35 5g":      ("Galaxy", "Galaxy A35 5G",     "smartphone"),
-    "galaxy a35":         ("Galaxy", "Galaxy A35",        "smartphone"),
+    "galaxy a56 5g":  ("Galaxy", "Galaxy A56 5G",  "smartphone"),
+    "galaxy a56":     ("Galaxy", "Galaxy A56",     "smartphone"),
+    "galaxy a36 5g":  ("Galaxy", "Galaxy A36 5G",  "smartphone"),
+    "galaxy a36":     ("Galaxy", "Galaxy A36",     "smartphone"),
+    "galaxy a26 5g":  ("Galaxy", "Galaxy A26 5G",  "smartphone"),
+    "galaxy a26":     ("Galaxy", "Galaxy A26",     "smartphone"),
+    "galaxy a17":     ("Galaxy", "Galaxy A17",     "smartphone"),
+    "galaxy a16 5g":  ("Galaxy", "Galaxy A16 5G",  "smartphone"),
+    "galaxy a16":     ("Galaxy", "Galaxy A16",     "smartphone"),
+    "galaxy a15 5g":  ("Galaxy", "Galaxy A15 5G",  "smartphone"),
+    "galaxy a15":     ("Galaxy", "Galaxy A15",     "smartphone"),
+    "galaxy a55 5g":  ("Galaxy", "Galaxy A55 5G",  "smartphone"),
+    "galaxy a55":     ("Galaxy", "Galaxy A55",     "smartphone"),
+    "galaxy a35 5g":  ("Galaxy", "Galaxy A35 5G",  "smartphone"),
+    "galaxy a35":     ("Galaxy", "Galaxy A35",     "smartphone"),
 
-    # ===== SAMSUNG: Adapters / Accessories =====
+    # ===== SAMSUNG: Accessories =====
     "samsung power adapter 25w": ("Samsung Accessory", "Samsung 25W Adapter", "accessory"),
-    "samsung 25w adapter":       ("Samsung Accessory", "Samsung 25W Adapter", "accessory"),
-    "25w adapter":               ("Samsung Accessory", "Samsung 25W Adapter", "accessory"),
 
     # ===== HUAWEI =====
-    "huawei mate x7":  ("Huawei Mate", "Huawei Mate X7",  "smartphone"),
-    "huawei mate x6":  ("Huawei Mate", "Huawei Mate X6",  "smartphone"),
-    "huawei mate x5":  ("Huawei Mate", "Huawei Mate X5",  "smartphone"),
-    "huawei mate 60 pro+": ("Huawei Mate", "Huawei Mate 60 Pro+", "smartphone"),
-    "huawei mate 60 pro":  ("Huawei Mate", "Huawei Mate 60 Pro",  "smartphone"),
-    "huawei mate 60":  ("Huawei Mate", "Huawei Mate 60",  "smartphone"),
+    "huawei mate x7":       ("Huawei Mate", "Huawei Mate X7",       "smartphone"),
+    "huawei mate x6":       ("Huawei Mate", "Huawei Mate X6",       "smartphone"),
+    "huawei mate x5":       ("Huawei Mate", "Huawei Mate X5",       "smartphone"),
+    "huawei mate 60 pro+":  ("Huawei Mate", "Huawei Mate 60 Pro+",  "smartphone"),
+    "huawei mate 60 pro":   ("Huawei Mate", "Huawei Mate 60 Pro",   "smartphone"),
+    "huawei mate 60":       ("Huawei Mate", "Huawei Mate 60",       "smartphone"),
     "huawei pura 70 ultra": ("Huawei Pura", "Huawei Pura 70 Ultra", "smartphone"),
     "huawei pura 70 pro+":  ("Huawei Pura", "Huawei Pura 70 Pro+",  "smartphone"),
     "huawei pura 70 pro":   ("Huawei Pura", "Huawei Pura 70 Pro",   "smartphone"),
@@ -262,112 +281,111 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "honor 200":         ("Honor",       "Honor 200",         "smartphone"),
     "honor x9c":         ("Honor",       "Honor X9c",         "smartphone"),
     "honor x9b":         ("Honor",       "Honor X9b",         "smartphone"),
-    "honor x8b":         ("Honor",       "Honor X8b",         "smartphone"),
     "honor x8d":         ("Honor",       "Honor X8d",         "smartphone"),
+    "honor x8b":         ("Honor",       "Honor X8b",         "smartphone"),
     "honor x8a":         ("Honor",       "Honor X8a",         "smartphone"),
     "honor x7b":         ("Honor",       "Honor X7b",         "smartphone"),
     "honor x7a":         ("Honor",       "Honor X7a",         "smartphone"),
 
     # ===== NINTENDO =====
-    "nintendo switch oled":             ("Nintendo Switch", "Nintendo Switch OLED",            "console"),
-    "nintendo switch console":          ("Nintendo Switch", "Nintendo Switch",                 "console"),
-    "nintendo switch lite":             ("Nintendo Switch", "Nintendo Switch Lite",            "console"),
-    "nintendo switch 2":                ("Nintendo Switch", "Nintendo Switch 2",               "console"),
-    "nintendo switch":                  ("Nintendo Switch", "Nintendo Switch",                 "console"),
-    "switch oled":                      ("Nintendo Switch", "Nintendo Switch OLED",            "console"),
-    "switch lite":                      ("Nintendo Switch", "Nintendo Switch Lite",            "console"),
-    "switch 2":                         ("Nintendo Switch", "Nintendo Switch 2",               "console"),
-    "switch console":                   ("Nintendo Switch", "Nintendo Switch",                 "console"),
+    "nintendo switch oled":    ("Nintendo Switch", "Nintendo Switch OLED", "console"),
+    "nintendo switch console": ("Nintendo Switch", "Nintendo Switch",      "console"),
+    "nintendo switch lite":    ("Nintendo Switch", "Nintendo Switch Lite", "console"),
+    "nintendo switch 2":       ("Nintendo Switch", "Nintendo Switch 2",    "console"),
+    "nintendo switch":         ("Nintendo Switch", "Nintendo Switch",      "console"),
+    "switch oled":             ("Nintendo Switch", "Nintendo Switch OLED", "console"),
+    "switch lite":             ("Nintendo Switch", "Nintendo Switch Lite", "console"),
+    "switch 2":                ("Nintendo Switch", "Nintendo Switch 2",    "console"),
+    "switch console":          ("Nintendo Switch", "Nintendo Switch",      "console"),
 
-    # ===== META / VR =====
-    "meta quest 3s":    ("Meta Quest", "Meta Quest 3S",    "vr"),
-    "meta quest 3":     ("Meta Quest", "Meta Quest 3",     "vr"),
-    "meta quest 2":     ("Meta Quest", "Meta Quest 2",     "vr"),
-    "meta quest pro":   ("Meta Quest", "Meta Quest Pro",   "vr"),
-    "quest 3s":         ("Meta Quest", "Meta Quest 3S",    "vr"),
-    "quest 3":          ("Meta Quest", "Meta Quest 3",     "vr"),
-    "quest 2":          ("Meta Quest", "Meta Quest 2",     "vr"),
+    # ===== META =====
+    "meta quest 3s":   ("Meta Quest", "Meta Quest 3S",  "vr"),
+    "meta quest 3":    ("Meta Quest", "Meta Quest 3",   "vr"),
+    "meta quest 2":    ("Meta Quest", "Meta Quest 2",   "vr"),
+    "meta quest pro":  ("Meta Quest", "Meta Quest Pro", "vr"),
+    "quest 3s":        ("Meta Quest", "Meta Quest 3S",  "vr"),
+    "quest 3":         ("Meta Quest", "Meta Quest 3",   "vr"),
+    "quest 2":         ("Meta Quest", "Meta Quest 2",   "vr"),
 
     # ===== GOPRO =====
-    "gopro hero 13 black":  ("GoPro", "GoPro Hero 13 Black",  "camera"),
-    "hero 13 black":        ("GoPro", "GoPro Hero 13 Black",  "camera"),
-    "gopro hero 12 black":  ("GoPro", "GoPro Hero 12 Black",  "camera"),
-    "hero 12 black":        ("GoPro", "GoPro Hero 12 Black",  "camera"),
-    "gopro hero 11 black":  ("GoPro", "GoPro Hero 11 Black",  "camera"),
-    "hero 11 black":        ("GoPro", "GoPro Hero 11 Black",  "camera"),
-    "gopro hero":           ("GoPro", "GoPro Hero",           "camera"),
-    "gopro":                ("GoPro", "GoPro",               "camera"),
+    "gopro hero 13 black": ("GoPro", "GoPro Hero 13 Black", "camera"),
+    "hero 13 black":       ("GoPro", "GoPro Hero 13 Black", "camera"),
+    "gopro hero 12 black": ("GoPro", "GoPro Hero 12 Black", "camera"),
+    "hero 12 black":       ("GoPro", "GoPro Hero 12 Black", "camera"),
+    "gopro hero 11 black": ("GoPro", "GoPro Hero 11 Black", "camera"),
+    "hero 11 black":       ("GoPro", "GoPro Hero 11 Black", "camera"),
+    "gopro hero":          ("GoPro", "GoPro Hero",          "camera"),
+    "gopro":               ("GoPro", "GoPro",              "camera"),
 
     # ===== CANON =====
-    "canon g7 x mark iii":  ("Canon", "Canon G7 X Mark III",  "camera"),
-    "canon g7 x mark 3":    ("Canon", "Canon G7 X Mark III",  "camera"),
-    "canon g7x mark iii":   ("Canon", "Canon G7 X Mark III",  "camera"),
-    "canon g7 x mark ii":   ("Canon", "Canon G7 X Mark II",   "camera"),
-    "canon g7 x":           ("Canon", "Canon G7 X",           "camera"),
-    "canon powershot":      ("Canon", "Canon PowerShot",      "camera"),
-    "canon eos r50":        ("Canon", "Canon EOS R50",        "camera"),
-    "canon eos r10":        ("Canon", "Canon EOS R10",        "camera"),
-    "canon eos r6":         ("Canon", "Canon EOS R6",         "camera"),
+    "canon g7 x mark iii": ("Canon", "Canon G7 X Mark III", "camera"),
+    "canon g7 x mark 3":   ("Canon", "Canon G7 X Mark III", "camera"),
+    "canon g7x mark iii":  ("Canon", "Canon G7 X Mark III", "camera"),
+    "canon g7 x mark ii":  ("Canon", "Canon G7 X Mark II",  "camera"),
+    "canon g7 x":          ("Canon", "Canon G7 X",          "camera"),
+    "canon powershot":     ("Canon", "Canon PowerShot",     "camera"),
+    "canon eos r50":       ("Canon", "Canon EOS R50",       "camera"),
+    "canon eos r10":       ("Canon", "Canon EOS R10",       "camera"),
+    "canon eos r6":        ("Canon", "Canon EOS R6",        "camera"),
 
     # ===== INSTA360 =====
-    "insta360 x5":          ("Insta360", "Insta360 X5",    "camera"),
-    "insta360 x4":          ("Insta360", "Insta360 X4",    "camera"),
-    "insta360 x3":          ("Insta360", "Insta360 X3",    "camera"),
-    "insta360 ace pro":     ("Insta360", "Insta360 Ace Pro","camera"),
-    "insta360 ace":         ("Insta360", "Insta360 Ace",   "camera"),
-    "insta360 go 3":        ("Insta360", "Insta360 Go 3",  "camera"),
-    "insta360":             ("Insta360", "Insta360",       "camera"),
+    "insta360 x5":      ("Insta360", "Insta360 X5",     "camera"),
+    "insta360 x4":      ("Insta360", "Insta360 X4",     "camera"),
+    "insta360 x3":      ("Insta360", "Insta360 X3",     "camera"),
+    "insta360 ace pro": ("Insta360", "Insta360 Ace Pro","camera"),
+    "insta360 ace":     ("Insta360", "Insta360 Ace",    "camera"),
+    "insta360 go 3":    ("Insta360", "Insta360 Go 3",   "camera"),
+    "insta360":         ("Insta360", "Insta360",        "camera"),
 
     # ===== DYSON =====
-    "dyson airwrap":        ("Dyson", "Dyson Airwrap",         "appliance"),
-    "dyson airstrait":      ("Dyson", "Dyson Airstrait",       "appliance"),
-    "dyson ht-01 airstrait":("Dyson", "Dyson Airstrait HT-01", "appliance"),
-    "dyson supersonic":     ("Dyson", "Dyson Supersonic",      "appliance"),
-    "dyson v15":            ("Dyson", "Dyson V15",             "appliance"),
-    "dyson v12":            ("Dyson", "Dyson V12",             "appliance"),
-    "dyson v11":            ("Dyson", "Dyson V11",             "appliance"),
-    "dyson v10":            ("Dyson", "Dyson V10",             "appliance"),
-    "dyson": ("Dyson", "Dyson", "appliance"),
+    "dyson ht-01 airstrait": ("Dyson", "Dyson Airstrait HT-01", "appliance"),
+    "dyson airstrait":       ("Dyson", "Dyson Airstrait",       "appliance"),
+    "dyson airwrap":         ("Dyson", "Dyson Airwrap",         "appliance"),
+    "dyson supersonic":      ("Dyson", "Dyson Supersonic",      "appliance"),
+    "dyson v15":             ("Dyson", "Dyson V15",             "appliance"),
+    "dyson v12":             ("Dyson", "Dyson V12",             "appliance"),
+    "dyson v11":             ("Dyson", "Dyson V11",             "appliance"),
+    "dyson v10":             ("Dyson", "Dyson V10",             "appliance"),
+    "dyson":                 ("Dyson", "Dyson",                "appliance"),
 
     # ===== DELL =====
-    "dell pro max":         ("Dell", "Dell Pro Max",          "laptop"),
-    "dell xps 15":          ("Dell", "Dell XPS 15",            "laptop"),
-    "dell xps 13":          ("Dell", "Dell XPS 13",            "laptop"),
-    "dell xps":             ("Dell", "Dell XPS",               "laptop"),
+    "dell pro max": ("Dell", "Dell Pro Max", "laptop"),
+    "dell xps 15":  ("Dell", "Dell XPS 15",  "laptop"),
+    "dell xps 13":  ("Dell", "Dell XPS 13",  "laptop"),
+    "dell xps":     ("Dell", "Dell XPS",     "laptop"),
 }
 
 # --------------------------------------------------------------------------
-# BRAND MAP  →  used by normalizer to assign brand field from model line
+# BRAND MAP
 # --------------------------------------------------------------------------
 LINE_TO_BRAND: dict[str, str] = {
-    "iPhone":           "Apple",
-    "AirPods":          "Apple",
-    "Apple Watch":      "Apple",
-    "MacBook":          "Apple",
-    "iPad":             "Apple",
-    "Mac":              "Apple",
-    "Apple TV":         "Apple",
-    "Galaxy":           "Samsung",
-    "Samsung Accessory":"Samsung",
-    "Huawei Mate":      "Huawei",
-    "Huawei Pura":      "Huawei",
-    "Huawei Nova":      "Huawei",
-    "Honor Magic":      "Honor",
-    "Honor":            "Honor",
-    "Nintendo Switch":  "Nintendo",
-    "Meta Quest":       "Meta",
-    "GoPro":            "GoPro",
-    "Canon":            "Canon",
-    "Insta360":         "Insta360",
-    "Dyson":            "Dyson",
-    "Dell":             "Dell",
+    "iPhone":            "Apple",
+    "AirPods":           "Apple",
+    "Apple Watch":       "Apple",
+    "MacBook":           "Apple",
+    "iPad":              "Apple",
+    "Mac":               "Apple",
+    "Apple TV":          "Apple",
+    "Galaxy":            "Samsung",
+    "Samsung Accessory": "Samsung",
+    "Huawei Mate":       "Huawei",
+    "Huawei Pura":       "Huawei",
+    "Huawei Nova":       "Huawei",
+    "Honor Magic":       "Honor",
+    "Honor":             "Honor",
+    "Nintendo Switch":   "Nintendo",
+    "Meta Quest":        "Meta",
+    "GoPro":             "GoPro",
+    "Canon":             "Canon",
+    "Insta360":          "Insta360",
+    "Dyson":             "Dyson",
+    "Dell":              "Dell",
 }
 
 # --------------------------------------------------------------------------
 # COLOR ALIASES
 # --------------------------------------------------------------------------
 COLOR_ALIASES: dict[str, str] = {
-    # Titanium series
     "nat": "Natural Titanium",
     "natural": "Natural Titanium",
     "natural titanium": "Natural Titanium",
@@ -380,7 +398,6 @@ COLOR_ALIASES: dict[str, str] = {
     "desert": "Desert Titanium",
     "desert titanium": "Desert Titanium",
     "dt": "Desert Titanium",
-    # Standard colors
     "black": "Black",
     "blk": "Black",
     "bk": "Black",
@@ -442,25 +459,19 @@ COLOR_ALIASES: dict[str, str] = {
 # MEMORY ALIASES
 # --------------------------------------------------------------------------
 MEMORY_ALIASES: dict[str, str] = {
-    "32": "32GB",   "32gb": "32GB",
-    "64": "64GB",   "64gb": "64GB",
-    "128": "128GB", "128gb": "128GB",
-    "256": "256GB", "256gb": "256GB",
-    "512": "512GB", "512gb": "512GB",
-    "1tb": "1TB",   "1 tb": "1TB",   "1024": "1TB", "1024gb": "1TB",
-    "2tb": "2TB",   "2 tb": "2TB",
-    # RAM for MacBook / laptops
-    "8gb": "8GB",   "8gb ram": "8GB",
-    "16gb": "16GB", "16gb ram": "16GB",
-    "18gb": "18GB", "18gb ram": "18GB",
-    "24gb": "24GB", "24gb ram": "24GB",
-    "32gb ram": "32GB",
-    "36gb": "36GB", "36gb ram": "36GB",
-    "48gb": "48GB", "48gb ram": "48GB",
-    "64gb ram": "64GB",
-    "96gb": "96GB", "96gb ram": "96GB",
-    "128gb ram": "128GB",
-    "192gb": "192GB", "192gb ram": "192GB",
+    "32": "32GB",    "32gb": "32GB",
+    "64": "64GB",    "64gb": "64GB",
+    "128": "128GB",  "128gb": "128GB",
+    "256": "256GB",  "256gb": "256GB",
+    "512": "512GB",  "512gb": "512GB",
+    "1tb": "1TB",    "1 tb": "1TB",    "1024": "1TB",  "1024gb": "1TB",
+    "2tb": "2TB",    "2 tb": "2TB",
+    # Variants with capital
+    "1Tb": "1TB",    "2Tb": "2TB",
+    # RAM
+    "8gb": "8GB",    "16gb": "16GB",   "18gb": "18GB",
+    "24gb": "24GB",  "36gb": "36GB",   "48gb": "48GB",
+    "96gb": "96GB",  "128gb ram": "128GB", "192gb": "192GB",
 }
 
 # --------------------------------------------------------------------------
@@ -468,68 +479,42 @@ MEMORY_ALIASES: dict[str, str] = {
 # --------------------------------------------------------------------------
 CONDITION_ALIASES: dict[str, str] = {
     "new": "new",
-    "новый": "new",
-    "нов": "new",
-    "sealed": "new",
-    "запечатан": "new",
+    "новый": "new", "нов": "new", "sealed": "new", "запечатан": "new",
     "used": "used",
-    "б/у": "used",
-    "бу": "used",
-    "bu": "used",
-    "ref": "refurbished",
-    "refurbished": "refurbished",
-    "refurb": "refurbished",
-    "восстановленный": "refurbished",
-    "cpo": "refurbished",
-    "like new": "used",
-    "как новый": "used",
-    "идеал": "used",
+    "б/у": "used", "бу": "used", "bu": "used",
+    "ref": "refurbished", "refurbished": "refurbished", "refurb": "refurbished",
+    "восстановленный": "refurbished", "cpo": "refurbished",
+    "like new": "used", "как новый": "used", "идеал": "used",
 }
 
 # --------------------------------------------------------------------------
 # SIM TYPE ALIASES
 # --------------------------------------------------------------------------
 SIM_TYPE_ALIASES: dict[str, str] = {
-    "esim": "esim",
-    "e-sim": "esim",
-    "dual": "dual",
-    "dual sim": "dual",
-    "2sim": "dual",
-    "2 sim": "dual",
-    "nano": "dual",
-    "physical": "dual",
-    "phy": "dual",
-    "фыз": "dual",
-    "физ": "dual",
+    "esim": "esim", "e-sim": "esim",
+    "1sim": "single", "1 sim": "single",
+    "dual": "dual", "dual sim": "dual", "2sim": "dual", "2 sim": "dual",
+    "nano": "dual", "physical": "dual", "phy": "dual",
+    "фыз": "dual", "физ": "dual",
 }
 
 # --------------------------------------------------------------------------
 # CURRENCY ALIASES
 # --------------------------------------------------------------------------
 CURRENCY_ALIASES: dict[str, str] = {
-    "$": "USD",
-    "usd": "USD",
-    "долл": "USD",
-    "руб": "RUB",
-    "₽": "RUB",
-    "rub": "RUB",
-    "р": "RUB",
-    "€": "EUR",
-    "eur": "EUR",
-    "евро": "EUR",
+    "$": "USD", "usd": "USD", "долл": "USD",
+    "руб": "RUB", "₽": "RUB", "rub": "RUB", "р": "RUB",
+    "€": "EUR", "eur": "EUR", "евро": "EUR",
 }
 
 # --------------------------------------------------------------------------
-# APPLE KEYWORDS (kept for backward compat)
+# APPLE KEYWORDS (backward compat)
 # --------------------------------------------------------------------------
 APPLE_KEYWORDS: set[str] = {
     "iphone", "airpods", "apple watch", "macbook", "ipad",
     "mac mini", "mac studio", "apple", "app", "aw", "mba", "mbp",
 }
 
-# --------------------------------------------------------------------------
-# NOISE WORDS
-# --------------------------------------------------------------------------
 NOISE_WORDS: set[str] = {
     "apple", "iphone", "/", "-", "|", "•", "·", ",", ".", ":",
     "в наличии", "в наличие", "есть", "stock", "available",
