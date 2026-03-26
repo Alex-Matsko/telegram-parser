@@ -3,7 +3,7 @@ import type {
   Source, SourceCreate, SourceStats, Supplier,
   UnresolvedResponse, ResolveRequest,
   BotScenario, BotScenarioStep,
-  DashboardStats, FilterOptions, Offer, Product,
+  DashboardStats, FilterOptions, Product, ProductDetail,
 } from '../types';
 import {
   mockGetPriceList, mockGetProductOffers, mockGetPriceHistoryChart, mockGetPriceChangeEvents,
@@ -32,8 +32,8 @@ export async function getPriceList(filters: PriceListFilters = {}): Promise<Pric
   Object.entries(filters).forEach(([k, v]) => { if (v !== undefined && v !== '') params.set(k, String(v)); });
   return request(`/price-list?${params.toString()}`);
 }
-export async function getProductDetail(productId: number): Promise<{ product: Product; offers: Offer[] }> {
-  if (USE_MOCKS) { await delay(200); return mockGetProductOffers(productId); }
+export async function getProductDetail(productId: number): Promise<ProductDetail> {
+  if (USE_MOCKS) { await delay(200); return mockGetProductOffers(productId) as unknown as ProductDetail; }
   return request(`/price-list/${productId}`);
 }
 
