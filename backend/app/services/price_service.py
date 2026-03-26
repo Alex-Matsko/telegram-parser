@@ -169,8 +169,6 @@ async def get_product_detail(
     if not product:
         return None
 
-    # JOIN offer -> supplier + LEFT JOIN raw_message -> source
-    # to get source context (raw_line, source name, channel url, message date)
     offers_result = await session.execute(
         select(Offer, Supplier.display_name, RawMessage, Source)
         .join(Supplier, Offer.supplier_id == Supplier.id)
@@ -192,9 +190,9 @@ async def get_product_detail(
             confidence=offer.detected_confidence,
             is_current=offer.is_current,
             updated_at=offer.updated_at,
-            raw_line=offer.raw_line if hasattr(offer, "raw_line") else None,
-            source_name=source.display_name if source else None,
-            channel_url=source.channel_url if source else None,
+            raw_line=offer.raw_line,
+            source_name=source.source_name if source else None,
+            channel_url=None,  # field not in Source model yet
             message_date=raw_msg.message_date if raw_msg else None,
             raw_message_id=raw_msg.id if raw_msg else None,
         ))
