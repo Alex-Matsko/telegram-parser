@@ -1,15 +1,12 @@
 """
 LLM-based fallback parser for complex/ambiguous price messages.
 
-Recommended .env for OpenRouter free tier:
-  LLM_API_URL=https://openrouter.ai/api/v1
-  LLM_API_KEY=sk-or-v1-...
-  LLM_MODEL=openrouter/auto
-  LLM_FALLBACK_MODELS=meta-llama/llama-3.3-70b-instruct:free,mistralai/mistral-small-3.1-24b-instruct:free,nvidia/llama-3.1-nemotron-nano-8b-v1:free
-  LLM_RATE_LIMIT_DELAY=1.0
-
-`openrouter/auto` is a free meta-router that picks the best available free
-model automatically — use it as primary to avoid maintaining model IDs.
+Groq free tier .env example:
+  LLM_API_URL=https://api.groq.com/openai/v1
+  LLM_API_KEY=gsk_...
+  LLM_MODEL=llama-3.3-70b-versatile
+  LLM_FALLBACK_MODELS=llama-3.1-8b-instant,gemma2-9b-it,mistral-saba-24b
+  LLM_RATE_LIMIT_DELAY=2.0
 """
 import asyncio
 import json
@@ -23,7 +20,9 @@ from app.parser.regex_parser import ParsedOffer
 
 logger = logging.getLogger(__name__)
 
-_FALLBACK_STATUS_CODES = {429, 404, 503, 502}
+# 400 = decommissioned model (treat as retriable so we move to next fallback)
+# 429 = rate limit, 404/503/502 = unavailable
+_FALLBACK_STATUS_CODES = {400, 429, 404, 503, 502}
 
 SYSTEM_PROMPT = """Ты — модуль нормализации прайсов электроники из Telegram-сообщений.
 
@@ -31,55 +30,32 @@ SYSTEM_PROMPT = """Ты — модуль нормализации прайсов
 1. Проанализировать входной текст сообщения.
 2. Выделить товарные позиции.
 3. Для каждой позиции извлечь:
-   - category, brand, model, memory, color, condition, price, currency, availability
+   - category, brand, model, memory, color, condition, price, currency
 4. Привести данные к нормализованному виду.
 5. Вернуть результат строго в JSON.
 6. Если уверенность низкая, установить "needs_review": true.
-7. Не додумывать данные, если их нет явно или они не следуют надёжно из контекста.
-8. Если в одном сообщении несколько позиций — вернуть массив объектов внутри поля "items".
+7. Не додумывать данные, если их нет явно.
+8. Если несколько позиций — вернуть массив объектов в поле "items".
 
 Правила нормализации:
-- 15 pm, 15 pro max, iphone 15pm — варианты iPhone 15 Pro Max.
+- 15 pm, 15 pro max, iphone 15pm — iPhone 15 Pro Max.
 - 17 pro 256 — iPhone 17 Pro, 256GB.
-- nat / natural — Natural Titanium, если контекст указывает на Apple Pro-модель.
-- Если валюта не указана, пытаться определить по контексту, иначе "currency": "RUB".
+- nat / natural — Natural Titanium для Apple Pro-моделей.
+- Если валюта не указана — "currency": "RUB".
 - Числа рядом с моделью не считать ценой, если они похожи на объём памяти (32/64/128/256/512/1024).
-- Строки-заголовки, даты, подписи — игнорировать.
+- Цена с точкой как разделителем тысяч: 62.000 = 62000, 96.500 = 96500.
 - Состояние: new / used / refurbished. По умолчанию new.
 - Валюта: RUB / USD / EUR.
-- Память: нормализовать к формату 256GB / 1TB.
-- Цвет: на английском (Black, White, Natural Titanium, Blue Titanium и т.д.).
+- Память: нормализовать к 256GB / 1TB.
+- Цвет: на английском.
 
-line — продуктовая линейка: iPhone / AirPods / Apple Watch / MacBook / iPad / Mac.
-category — одно из: smartphone / headphones / watch / laptop / tablet / desktop.
-
-Пример входа: "17 pro 256"
-Пример выхода:
-{
-  "items": [
-    {
-      "category": "smartphone",
-      "brand": "Apple",
-      "line": "iPhone",
-      "model": "iPhone 17 Pro",
-      "memory": "256GB",
-      "color": null,
-      "condition": "new",
-      "sim_type": null,
-      "price": null,
-      "currency": "RUB",
-      "availability": null,
-      "confidence": 0.85,
-      "needs_review": false
-    }
-  ]
-}
+line — iPhone / AirPods / Apple Watch / MacBook / iPad / Mac / Galaxy / Huawei / Honor / Nintendo Switch / Meta Quest / GoPro / Canon / Insta360 / Dyson / Dell.
+category — smartphone / headphones / watch / laptop / tablet / desktop / camera / console / vr / appliance / tv.
 
 Отвечай ТОЛЬКО валидным JSON, без пояснений и текста снаружи.
+Пример: {"items":[{"category":"smartphone","brand":"Apple","line":"iPhone","model":"iPhone 17 Pro","memory":"256GB","color":null,"condition":"new","sim_type":null,"price":96500,"currency":"RUB","confidence":0.9,"needs_review":false}]}
 """
 
-# Global semaphore: max concurrent LLM calls across the process.
-# Free tier = 20 req/min → 1 req / 3s is safe. Adjust via LLM_CONCURRENCY in .env.
 _llm_semaphore: asyncio.Semaphore | None = None
 
 
@@ -92,7 +68,6 @@ def _get_semaphore() -> asyncio.Semaphore:
 
 
 async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> list[ParsedOffer]:
-    """Single LLM call. Raises HTTPStatusError on non-2xx."""
     response = await client.post(
         f"{settings.llm_api_url}/chat/completions",
         headers={
@@ -128,18 +103,10 @@ async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> list[
 
 
 async def parse_with_llm(text: str) -> list[ParsedOffer]:
-    """
-    Parse a message using LLM with automatic model fallback.
-
-    Concurrency is limited by a global semaphore (default 1 = sequential)
-    to avoid hitting the free-tier rate limit when parsing a large batch.
-    Add a small inter-call delay via LLM_RATE_LIMIT_DELAY in .env (default 1.0s).
-    """
     if not settings.llm_api_key:
         logger.warning("LLM API key not configured, skipping LLM parsing")
         return []
 
-    # Build deduplicated model chain: primary + fallbacks
     seen: set[str] = set()
     models: list[str] = []
     for m in [settings.llm_model] + settings.llm_fallback_models_list:
@@ -147,11 +114,10 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
             seen.add(m)
             models.append(m)
 
-    rate_limit_delay: float = getattr(settings, "llm_rate_limit_delay", 1.0)
+    rate_limit_delay: float = getattr(settings, "llm_rate_limit_delay", 2.0)
     last_error: Exception | None = None
 
     async with _get_semaphore():
-        # Small delay to spread requests over time
         if rate_limit_delay > 0:
             await asyncio.sleep(rate_limit_delay)
 
@@ -165,15 +131,13 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
                 except httpx.HTTPStatusError as e:
                     status = e.response.status_code
                     if status in _FALLBACK_STATUS_CODES:
-                        logger.warning(
-                            f"LLM '{model}' returned {status} — trying next fallback"
-                        )
+                        logger.warning(f"LLM '{model}' returned {status} — trying next fallback")
                         last_error = e
                         continue
-                    # 401 bad key — stop immediately, no point retrying
+                    # 401 = bad key, stop immediately
                     logger.error(
                         f"LLM non-retriable HTTP {status} with '{model}': "
-                        f"{e.response.text[:200]}"
+                        f"{e.response.text[:300]}"
                     )
                     return []
 
@@ -215,7 +179,7 @@ def _dict_to_parsed_offer(data: dict) -> Optional[ParsedOffer]:
             model=data.get("model"),
             line=data.get("line"),
             category=data.get("category"),
-            brand=data.get("brand", "Apple"),
+            brand=data.get("brand", "Unknown"),
             memory=data.get("memory"),
             color=data.get("color"),
             condition=data.get("condition", "new"),

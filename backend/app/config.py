@@ -28,18 +28,19 @@ class Settings(BaseSettings):
     telegram_api_hash: str = ""
     telegram_session_string: str = ""
 
-    # LLM — Groq only
-    # Set in .env:
-    #   LLM_API_URL=https://api.groq.com/openai/v1
-    #   LLM_API_KEY=gsk_...
-    #   LLM_MODEL=llama-3.3-70b-versatile
-    #   LLM_FALLBACK_MODELS=llama3-70b-8192,mixtral-8x7b-32768
+    # LLM — Groq (all models verified active as of 2026-03)
+    # Override any of these in .env
+    # Active Groq models: https://console.groq.com/docs/models
     llm_api_url: str = "https://api.groq.com/openai/v1"
     llm_api_key: str = ""
     llm_model: str = "llama-3.3-70b-versatile"
 
-    # Groq fallback models (all served at api.groq.com)
-    llm_fallback_models: str = "llama3-70b-8192,mixtral-8x7b-32768,gemma2-9b-it"
+    # Fallback chain — all active on Groq free tier as of 2026-03:
+    # llama-3.1-8b-instant  — fast, 8B
+    # gemma2-9b-it          — Google Gemma 2 9B
+    # mistral-saba-24b      — Mistral 24B (preview)
+    # compound-beta-mini    — Groq compound model
+    llm_fallback_models: str = "llama-3.1-8b-instant,gemma2-9b-it,mistral-saba-24b,compound-beta-mini"
 
     # App
     secret_key: str = "changeme"
@@ -47,11 +48,11 @@ class Settings(BaseSettings):
     parser_confidence_threshold: float = 0.5
     skip_unchanged_prices: bool = True
 
-    # Rate limiting: seconds between LLM calls (Groq free = 30 rpm)
+    # Rate limiting: Groq free = 30 rpm, safe delay = 2s
     llm_rate_limit_delay: float = 2.0
     llm_concurrency: int = 1
 
-    # Collector: how many days back to fetch on first run
+    # Collector
     collector_history_days: int = 7
 
     @property
@@ -62,9 +63,7 @@ class Settings(BaseSettings):
     @classmethod
     def validate_telegram_api_id(cls, v: int) -> int:
         if v == 0:
-            logger.warning(
-                "TELEGRAM_API_ID is not set — Telegram collection will not work."
-            )
+            logger.warning("TELEGRAM_API_ID is not set — Telegram collection will not work.")
         return v
 
     @field_validator("secret_key")
