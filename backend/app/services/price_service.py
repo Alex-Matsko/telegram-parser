@@ -192,7 +192,7 @@ async def get_product_detail(
             updated_at=offer.updated_at,
             raw_line=offer.raw_line,
             source_name=source.source_name if source else None,
-            channel_url=None,  # field not in Source model yet
+            channel_url=source.channel_url if source else None,
             message_date=raw_msg.message_date if raw_msg else None,
             raw_message_id=raw_msg.id if raw_msg else None,
         ))

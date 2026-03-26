@@ -21,6 +21,7 @@ class Source(Base):
     type = Column(String(20), nullable=False)  # channel / group / bot
     telegram_id = Column(BigInteger, nullable=False, unique=True)
     source_name = Column(String(255), nullable=False)
+    channel_url = Column(String(512), nullable=True)  # e.g. https://t.me/channel_name
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     poll_interval_minutes = Column(Integer, default=30, nullable=False)
