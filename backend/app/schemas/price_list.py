@@ -46,12 +46,15 @@ class OfferDetail(BaseModel):
     confidence: float
     is_current: bool
     updated_at: datetime
-    # Source context — first-party traceability
-    raw_line: Optional[str] = None          # конкретная строка из прайса
-    source_name: Optional[str] = None       # название канала/источника
-    channel_url: Optional[str] = None       # ссылка на Telegram-канал
-    message_date: Optional[datetime] = None # дата сообщения
-    raw_message_id: Optional[int] = None    # ID raw_message для дополнительного поиска
+    # Source traceability
+    raw_line: Optional[str] = None
+    source_name: Optional[str] = None
+    channel_url: Optional[str] = None
+    channel_telegram_id: Optional[int] = None      # for building t.me link
+    message_date: Optional[datetime] = None
+    raw_message_id: Optional[int] = None
+    telegram_message_id: Optional[int] = None      # actual Telegram message ID
+    message_text: Optional[str] = None             # full raw message text
 
 
 class PriceListDetailItem(BaseModel):

@@ -8,7 +8,6 @@ from typing import Optional
 
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
 
 from app.models.offer import Offer
 from app.models.price_history import PriceHistory
@@ -123,7 +122,6 @@ async def get_price_list(
         best_supplier_name, best_supplier_id, second_supplier_name, third_supplier_name = best_supplier_map.get(
             product.id, ("Unknown", 0, None, None)
         )
-
         items.append(
             PriceListItem(
                 product_id=product.id,
@@ -180,6 +178,18 @@ async def get_product_detail(
 
     offers = []
     for offer, display_name, raw_msg, source in offers_result.all():
+        # Build direct Telegram message link:
+        # public channel:  https://t.me/{username}/{msg_id}  — needs username, not available here
+        # private channel: https://t.me/c/{channel_id}/{msg_id} — channel_id without -100 prefix
+        tg_link = None
+        if source and raw_msg and raw_msg.telegram_message_id:
+            cid = source.telegram_id
+            # strip -100 prefix used by Telegram Bot API for supergroups/channels
+            if cid and cid < 0:
+                cid = int(str(abs(cid)).lstrip("100") or str(abs(cid)))
+            if cid:
+                tg_link = f"https://t.me/c/{cid}/{raw_msg.telegram_message_id}"
+
         offers.append(OfferDetail(
             offer_id=offer.id,
             supplier_id=offer.supplier_id,
@@ -193,8 +203,15 @@ async def get_product_detail(
             raw_line=offer.raw_line,
             source_name=source.source_name if source else None,
             channel_url=source.channel_url if source else None,
+            channel_telegram_id=source.telegram_id if source else None,
             message_date=raw_msg.message_date if raw_msg else None,
             raw_message_id=raw_msg.id if raw_msg else None,
+            telegram_message_id=raw_msg.telegram_message_id if raw_msg else None,
+            message_text=raw_msg.message_text if raw_msg else None,
+            # override channel_url with constructed tg_link if not set manually
+            **({
+                "channel_url": tg_link
+            } if tg_link and not (source and source.channel_url) else {}),
         ))
 
     return PriceListDetailItem(
@@ -242,12 +259,7 @@ async def get_price_history(
         )
         for ph, display_name in rows
     ]
-
-    return PriceHistoryResponse(
-        product_id=product_id,
-        product_name=product_name,
-        history=history,
-    )
+    return PriceHistoryResponse(product_id=product_id, product_name=product_name, history=history)
 
 
 async def get_price_chart_data(
@@ -282,12 +294,7 @@ async def get_price_chart_data(
         series_map[ph.supplier_id].data.append(
             ChartDataPoint(timestamp=ph.captured_at, price=ph.price)
         )
-
-    return PriceChartResponse(
-        product_id=product_id,
-        product_name=product_name,
-        series=list(series_map.values()),
-    )
+    return PriceChartResponse(product_id=product_id, product_name=product_name, series=list(series_map.values()))
 
 
 async def get_dashboard_stats(session: AsyncSession) -> DashboardStats:
@@ -310,7 +317,6 @@ async def get_dashboard_stats(session: AsyncSession) -> DashboardStats:
     error_source_count = (await session.execute(
         select(func.count(Source.id)).where(Source.error_count > 0)
     )).scalar() or 0
-
     return DashboardStats(
         total_products=total_products,
         total_sources=total_sources,
@@ -332,20 +338,16 @@ async def _batch_best_suppliers(
 ) -> dict[int, tuple[str, int, Optional[str], Optional[str]]]:
     if not product_ids:
         return {}
-
     result = await session.execute(
         select(Offer.product_id, Offer.price, Supplier.id, Supplier.display_name)
         .join(Supplier, Offer.supplier_id == Supplier.id)
         .where(and_(Offer.is_current == True, Offer.product_id.in_(product_ids)))  # noqa: E712
         .order_by(Offer.product_id, Offer.price)
     )
-    rows = result.all()
-
     from collections import defaultdict
     product_offers: dict[int, list[tuple]] = defaultdict(list)
-    for product_id, price, supplier_id, display_name in rows:
+    for product_id, price, supplier_id, display_name in result.all():
         product_offers[product_id].append((price, supplier_id, display_name))
-
     out: dict[int, tuple[str, int, Optional[str], Optional[str]]] = {}
     for product_id, offers in product_offers.items():
         seen: dict[int, tuple] = {}
@@ -353,11 +355,9 @@ async def _batch_best_suppliers(
             if supplier_id not in seen:
                 seen[supplier_id] = (price, supplier_id, display_name)
         sorted_offers = sorted(seen.values(), key=lambda x: x[0])
-
-        best = sorted_offers[0] if len(sorted_offers) > 0 else None
+        best = sorted_offers[0] if sorted_offers else None
         second = sorted_offers[1] if len(sorted_offers) > 1 else None
         third = sorted_offers[2] if len(sorted_offers) > 2 else None
-
         out[product_id] = (
             best[2] if best else "Unknown",
             best[1] if best else 0,
@@ -373,25 +373,22 @@ async def _batch_runner_up_prices(
 ) -> dict[int, tuple[Optional[Decimal], Optional[Decimal]]]:
     if not product_ids:
         return {}
-
     result = await session.execute(
         select(Offer.product_id, Offer.price)
         .where(and_(Offer.is_current == True, Offer.product_id.in_(product_ids)))  # noqa: E712
         .order_by(Offer.product_id, Offer.price)
     )
-    rows = result.all()
-
     from collections import defaultdict
     prices_map: dict[int, list[Decimal]] = defaultdict(list)
-    for product_id, price in rows:
+    for product_id, price in result.all():
         prices_map[product_id].append(price)
-
     out = {}
     for product_id, prices in prices_map.items():
         unique_prices = sorted(set(prices))
-        second = unique_prices[1] if len(unique_prices) > 1 else None
-        third = unique_prices[2] if len(unique_prices) > 2 else None
-        out[product_id] = (second, third)
+        out[product_id] = (
+            unique_prices[1] if len(unique_prices) > 1 else None,
+            unique_prices[2] if len(unique_prices) > 2 else None,
+        )
     return out
 
 
@@ -401,9 +398,7 @@ async def _batch_price_change_3d(
 ) -> dict[int, tuple[Optional[Decimal], Optional[float]]]:
     if not product_ids:
         return {}
-
     three_days_ago = datetime.now(timezone.utc) - timedelta(days=3)
-
     oldest_sq = (
         select(
             PriceHistory.product_id,
@@ -416,7 +411,6 @@ async def _batch_price_change_3d(
         .group_by(PriceHistory.product_id)
         .subquery()
     )
-
     result = await session.execute(
         select(PriceHistory.product_id, PriceHistory.price)
         .join(oldest_sq, and_(
@@ -425,14 +419,12 @@ async def _batch_price_change_3d(
         ))
     )
     oldest_prices = {row[0]: row[1] for row in result.all()}
-
     current_sq = (
         select(Offer.product_id, func.min(Offer.price).label("best_price"))
         .where(and_(Offer.is_current == True, Offer.product_id.in_(product_ids)))  # noqa: E712
         .group_by(Offer.product_id)
     )
     current_prices = {row[0]: row[1] for row in (await session.execute(current_sq)).all()}
-
     out = {}
     for product_id in product_ids:
         old = oldest_prices.get(product_id)
@@ -441,7 +433,5 @@ async def _batch_price_change_3d(
             out[product_id] = (None, None)
             continue
         change = current - old
-        pct = float(change / old * 100)
-        out[product_id] = (change, pct)
-
+        out[product_id] = (change, float(change / old * 100))
     return out

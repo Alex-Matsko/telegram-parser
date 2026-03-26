@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getProductDetail } from '../../api/client';
 import { useNavigate } from 'react-router-dom';
-import { History, Loader2, TrendingUp, TrendingDown, ExternalLink, MessageSquare } from 'lucide-react';
+import { History, Loader2, TrendingUp, TrendingDown, ExternalLink, MessageSquare, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface Props { productId: number; }
 
@@ -18,6 +19,8 @@ function fmtDate(iso: string | null): string {
 
 export default function PriceDetail({ productId }: Props) {
   const navigate = useNavigate();
+  const [expandedMsg, setExpandedMsg] = useState<number | null>(null);
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['productDetail', productId],
     queryFn: () => getProductDetail(productId),
@@ -33,7 +36,6 @@ export default function PriceDetail({ productId }: Props) {
   );
   if (!data) return null;
 
-  // real API: offers[].offer_id; fallback to .id if API returns plain id
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const offers = [...(data.offers as any[])].sort((a, b) => a.price - b.price);
   const best = offers[0];
@@ -56,12 +58,19 @@ export default function PriceDetail({ productId }: Props) {
 
       <div className="grid gap-2">
         {offers.map((offer, idx) => {
-          const offerId    = getId(offer);
-          const isWinner   = offerId === getId(best);
+          const offerId = getId(offer);
+          const isWinner = offerId === getId(best);
           const diffFromBest = idx > 0 ? offer.price - best.price : 0;
-          const diffPct    = idx > 0 ? Math.round((diffFromBest / best.price) * 100) : 0;
-          const conf       = offer.confidence ?? offer.detected_confidence ?? 1;
-          const confCls    = conf > 0.9 ? 'bg-positive' : conf > 0.7 ? 'bg-warning' : 'bg-negative';
+          const diffPct = idx > 0 ? Math.round((diffFromBest / best.price) * 100) : 0;
+          const conf = offer.confidence ?? offer.detected_confidence ?? 1;
+          const confCls = conf > 0.9 ? 'bg-positive' : conf > 0.7 ? 'bg-warning' : 'bg-negative';
+          const msgExpanded = expandedMsg === offerId;
+          const hasRawMsg = !!offer.message_text;
+
+          // Direct link to Telegram message
+          const msgLink = offer.channel_url && offer.telegram_message_id
+            ? offer.channel_url  // already constructed as t.me/c/{id}/{msg_id} by backend
+            : null;
 
           return (
             <div
@@ -88,7 +97,7 @@ export default function PriceDetail({ productId }: Props) {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-4 flex-shrink-0">
+                <div className="flex items-center gap-3 flex-shrink-0">
                   <div className="flex items-center gap-1" title={`Уверенность: ${Math.round(conf * 100)}%`}>
                     <div className="w-14 h-1 bg-surface-600 rounded-full overflow-hidden">
                       <div className={`h-full rounded-full ${confCls}`} style={{ width: `${conf * 100}%` }} />
@@ -117,33 +126,70 @@ export default function PriceDetail({ productId }: Props) {
                 </div>
               </div>
 
-              {/* Source context row */}
-              {(offer.raw_line || offer.source_name || offer.message_date) && (
-                <div className="px-3 pb-2.5 pt-1 flex items-start gap-2 border-t border-border/10">
-                  <MessageSquare className="w-3 h-3 text-gray-600 flex-shrink-0 mt-0.5" />
-                  <div className="flex flex-col gap-0.5 min-w-0">
+              {/* Source row: channel + date + raw_line + toggle for full message */}
+              <div className="px-3 pb-2.5 pt-0 border-t border-border/10">
+                <div className="flex items-center justify-between gap-2 pt-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <MessageSquare className="w-3 h-3 text-gray-600 flex-shrink-0" />
+                    {/* Channel link */}
+                    {offer.source_name && (
+                      msgLink ? (
+                        <a
+                          href={msgLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-[10px] text-accent hover:text-accent-hover transition-colors font-medium"
+                        >
+                          <ExternalLink className="w-2.5 h-2.5" />
+                          {offer.source_name}
+                        </a>
+                      ) : (
+                        <span className="text-[10px] text-gray-500">{offer.source_name}</span>
+                      )
+                    )}
+                    {offer.message_date && (
+                      <span className="text-[10px] text-gray-600">{fmtDate(offer.message_date)}</span>
+                    )}
+                    {/* Verbatim parsed line */}
                     {offer.raw_line && (
-                      <span className="text-[11px] font-mono text-gray-400 truncate" title={offer.raw_line}>
+                      <span className="text-[10px] font-mono text-gray-500 truncate max-w-[200px]" title={offer.raw_line}>
                         {offer.raw_line}
                       </span>
                     )}
-                    <div className="flex items-center gap-2">
-                      {offer.channel_url ? (
-                        <a href={offer.channel_url} target="_blank" rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-[10px] text-accent hover:text-accent-hover transition-colors">
-                          <ExternalLink className="w-2.5 h-2.5" />
-                          {offer.source_name ?? offer.channel_url}
-                        </a>
-                      ) : offer.source_name ? (
-                        <span className="text-[10px] text-gray-500">{offer.source_name}</span>
-                      ) : null}
-                      {offer.message_date && (
-                        <span className="text-[10px] text-gray-600">{fmtDate(offer.message_date)}</span>
-                      )}
-                    </div>
                   </div>
+
+                  {/* Toggle full message */}
+                  {hasRawMsg && (
+                    <button
+                      onClick={() => setExpandedMsg(msgExpanded ? null : offerId)}
+                      className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-300 transition-colors flex-shrink-0"
+                    >
+                      {msgExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                      {msgExpanded ? 'Скрыть' : 'Сырое сообщение'}
+                    </button>
+                  )}
                 </div>
-              )}
+
+                {/* Full raw message text */}
+                {msgExpanded && offer.message_text && (
+                  <div className="mt-2 p-2 rounded bg-surface-900/60 border border-border/20">
+                    <pre className="text-[11px] font-mono text-gray-300 whitespace-pre-wrap break-words leading-relaxed">
+                      {offer.message_text}
+                    </pre>
+                    {msgLink && (
+                      <a
+                        href={msgLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-2 flex items-center gap-1 text-[10px] text-accent hover:text-accent-hover transition-colors"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        Открыть в Telegram
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           );
         })}
