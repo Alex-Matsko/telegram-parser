@@ -1,17 +1,17 @@
 """
 LLM-based fallback parser for complex/ambiguous price messages.
 
-Supports any OpenAI-compatible API.
-Recommended free provider: OpenRouter
+Recommended .env for OpenRouter free tier:
   LLM_API_URL=https://openrouter.ai/api/v1
   LLM_API_KEY=sk-or-v1-...
-  LLM_MODEL=google/gemma-3-27b-it:free
-  LLM_FALLBACK_MODELS=meta-llama/llama-3.3-70b-instruct:free,mistralai/mistral-7b-instruct:free
+  LLM_MODEL=openrouter/auto
+  LLM_FALLBACK_MODELS=meta-llama/llama-3.3-70b-instruct:free,mistralai/mistral-small-3.1-24b-instruct:free,nvidia/llama-3.1-nemotron-nano-8b-v1:free
+  LLM_RATE_LIMIT_DELAY=1.0
 
-Alternative: Google Gemini direct
-  LLM_API_URL=https://generativelanguage.googleapis.com/v1beta/openai
-  LLM_MODEL=gemini-2.0-flash
+`openrouter/auto` is a free meta-router that picks the best available free
+model automatically — use it as primary to avoid maintaining model IDs.
 """
+import asyncio
 import json
 import logging
 from typing import Optional
@@ -23,7 +23,6 @@ from app.parser.regex_parser import ParsedOffer
 
 logger = logging.getLogger(__name__)
 
-# Status codes that should trigger a fallback to next model
 _FALLBACK_STATUS_CODES = {429, 404, 503, 502}
 
 SYSTEM_PROMPT = """Ты — модуль нормализации прайсов электроники из Telegram-сообщений.
@@ -79,12 +78,21 @@ category — одно из: smartphone / headphones / watch / laptop / tablet / 
 Отвечай ТОЛЬКО валидным JSON, без пояснений и текста снаружи.
 """
 
+# Global semaphore: max concurrent LLM calls across the process.
+# Free tier = 20 req/min → 1 req / 3s is safe. Adjust via LLM_CONCURRENCY in .env.
+_llm_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    global _llm_semaphore
+    if _llm_semaphore is None:
+        concurrency = getattr(settings, "llm_concurrency", 1)
+        _llm_semaphore = asyncio.Semaphore(concurrency)
+    return _llm_semaphore
+
 
 async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> list[ParsedOffer]:
-    """
-    Make a single LLM API call for the given model.
-    Raises httpx.HTTPStatusError on non-2xx so callers can handle fallback.
-    """
+    """Single LLM call. Raises HTTPStatusError on non-2xx."""
     response = await client.post(
         f"{settings.llm_api_url}/chat/completions",
         headers={
@@ -113,7 +121,7 @@ async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> list[
     elif isinstance(parsed, list):
         offers_raw = parsed
     else:
-        logger.warning(f"LLM ({model}) returned unexpected structure: {type(parsed)}")
+        logger.warning(f"LLM ({model}) unexpected structure: {type(parsed)}")
         return []
 
     return [o for o in (_dict_to_parsed_offer(i) for i in offers_raw) if o]
@@ -121,20 +129,17 @@ async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> list[
 
 async def parse_with_llm(text: str) -> list[ParsedOffer]:
     """
-    Parse a message using an LLM with automatic model fallback.
+    Parse a message using LLM with automatic model fallback.
 
-    Tries models in order:
-      1. settings.llm_model          (primary)
-      2. settings.llm_fallback_models (comma-separated list from .env)
-
-    On 429/404/502/503 automatically moves to next model.
-    Returns empty list only when ALL models fail.
+    Concurrency is limited by a global semaphore (default 1 = sequential)
+    to avoid hitting the free-tier rate limit when parsing a large batch.
+    Add a small inter-call delay via LLM_RATE_LIMIT_DELAY in .env (default 1.0s).
     """
     if not settings.llm_api_key:
         logger.warning("LLM API key not configured, skipping LLM parsing")
         return []
 
-    # Build deduplicated model chain
+    # Build deduplicated model chain: primary + fallbacks
     seen: set[str] = set()
     models: list[str] = []
     for m in [settings.llm_model] + settings.llm_fallback_models_list:
@@ -142,43 +147,47 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
             seen.add(m)
             models.append(m)
 
+    rate_limit_delay: float = getattr(settings, "llm_rate_limit_delay", 1.0)
     last_error: Exception | None = None
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for model in models:
-            try:
-                offers = await _call_model(client, model, text)
-                logger.info(f"LLM ({model}) parsed {len(offers)} offer(s)")
-                return offers
+    async with _get_semaphore():
+        # Small delay to spread requests over time
+        if rate_limit_delay > 0:
+            await asyncio.sleep(rate_limit_delay)
 
-            except httpx.HTTPStatusError as e:
-                status = e.response.status_code
-                if status in _FALLBACK_STATUS_CODES:
-                    logger.warning(
-                        f"LLM model '{model}' returned {status} — trying next fallback"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for model in models:
+                try:
+                    offers = await _call_model(client, model, text)
+                    logger.info(f"LLM ({model}) parsed {len(offers)} offer(s)")
+                    return offers
+
+                except httpx.HTTPStatusError as e:
+                    status = e.response.status_code
+                    if status in _FALLBACK_STATUS_CODES:
+                        logger.warning(
+                            f"LLM '{model}' returned {status} — trying next fallback"
+                        )
+                        last_error = e
+                        continue
+                    # 401 bad key — stop immediately, no point retrying
+                    logger.error(
+                        f"LLM non-retriable HTTP {status} with '{model}': "
+                        f"{e.response.text[:200]}"
                     )
+                    return []
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"LLM ({model}) invalid JSON: {e}")
                     last_error = e
                     continue
-                # Non-retriable (e.g. 401 bad key) — stop immediately
-                logger.error(
-                    f"LLM non-retriable HTTP {status} with model '{model}': "
-                    f"{e.response.text[:200]}"
-                )
-                return []
 
-            except json.JSONDecodeError as e:
-                logger.error(f"LLM ({model}) invalid JSON: {e}")
-                last_error = e
-                continue
+                except Exception as e:
+                    logger.error(f"LLM ({model}) unexpected error: {e}")
+                    last_error = e
+                    continue
 
-            except Exception as e:
-                logger.error(f"LLM ({model}) unexpected error: {e}")
-                last_error = e
-                continue
-
-    logger.error(
-        f"All {len(models)} LLM model(s) exhausted. Last error: {last_error}"
-    )
+    logger.error(f"All {len(models)} LLM model(s) exhausted. Last error: {last_error}")
     return []
 
 
@@ -199,12 +208,9 @@ def _dict_to_parsed_offer(data: dict) -> Optional[ParsedOffer]:
         price = data.get("price")
         if price is not None:
             price = float(price)
-
         confidence = float(data.get("confidence", 0.6))
-        needs_review = data.get("needs_review", False)
-        if needs_review:
+        if data.get("needs_review", False):
             confidence = min(confidence, 0.4)
-
         return ParsedOffer(
             model=data.get("model"),
             line=data.get("line"),
