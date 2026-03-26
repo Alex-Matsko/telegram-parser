@@ -6,8 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import TelegramClient
-from telethon.tl.functions.users import GetFullUserRequest
-from telethon.tl.types import InputPeerUser, Message
+from telethon.tl.functions.messages import GetDialogsRequest
+from telethon.tl.types import (
+    InputPeerEmpty,
+    InputPeerUser,
+    Message,
+    PeerUser,
+    User,
+)
 
 from app.config import settings
 from app.models.raw_message import RawMessage
@@ -23,23 +29,95 @@ def _ensure_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+async def _find_user_in_dialogs(
+    client: TelegramClient, user_id: int
+) -> Optional[InputPeerUser]:
+    """
+    Scan recent dialogs to find a User with the given user_id and
+    return an InputPeerUser (which carries the required access_hash).
+
+    Telethon cannot open a user dialog using only the numeric user_id —
+    it also needs the access_hash that Telegram hands out when you first
+    interact with a user.  The safest way to get it without a cached
+    session entry is to iterate GetDialogsRequest until we find the peer.
+    """
+    offset_date = 0
+    offset_id = 0
+    offset_peer = InputPeerEmpty()
+    chunk = 100
+
+    while True:
+        result = await client(GetDialogsRequest(
+            offset_date=offset_date,
+            offset_id=offset_id,
+            offset_peer=offset_peer,
+            limit=chunk,
+            hash=0,
+        ))
+
+        if not result.dialogs:
+            break
+
+        for user in result.users:
+            if isinstance(user, User) and user.id == user_id:
+                logger.info(
+                    f"[user-resolve] Found user id={user.id} "
+                    f"username={getattr(user, 'username', None)} "
+                    f"in dialogs"
+                )
+                return InputPeerUser(
+                    user_id=user.id,
+                    access_hash=user.access_hash,
+                )
+
+        if len(result.dialogs) < chunk:
+            break
+
+        last_msg = result.messages[-1]
+        offset_id = last_msg.id if hasattr(last_msg, 'id') else 0
+        offset_date = last_msg.date if hasattr(last_msg, 'date') else 0
+        offset_peer = result.dialogs[-1].peer
+
+    return None
+
+
 async def _resolve_entity(client: TelegramClient, source: Source):
     """
     Resolve a Telethon entity for any source type:
     - channel / group : telegram_id is negative (e.g. -1002674030582)
     - user            : telegram_id is a positive user_id (e.g. 5701246948)
-                        Telethon needs access_hash to open a user peer;
-                        we retrieve it via GetFullUserRequest.
+
+    For 'user' sources we first try client.get_input_entity() (works if the
+    session already has the user cached from a previous interaction), then
+    fall back to scanning dialogs to retrieve the access_hash.
     """
-    if source.type == "user":
-        # For user chats the telegram_id is the plain numeric user_id.
-        # We first resolve the full user to get the access_hash, then
-        # build InputPeerUser so iter_messages can open the dialog.
-        full = await client(GetFullUserRequest(source.telegram_id))
-        user = full.users[0]
-        return InputPeerUser(user_id=user.id, access_hash=user.access_hash)
-    else:
+    if source.type != "user":
         return await client.get_entity(source.telegram_id)
+
+    user_id = source.telegram_id
+
+    # Fast path — session cache already has this user
+    try:
+        entity = await client.get_input_entity(PeerUser(user_id))
+        logger.info(f"[user-resolve] Found user id={user_id} in session cache")
+        return entity
+    except ValueError:
+        pass
+
+    # Slow path — scan dialogs
+    logger.info(
+        f"[user-resolve] user_id={user_id} not in session cache, "
+        f"scanning dialogs ..."
+    )
+    entity = await _find_user_in_dialogs(client, user_id)
+    if entity is not None:
+        return entity
+
+    raise ValueError(
+        f"Cannot resolve user_id={user_id}: user not found in session cache "
+        f"or recent dialogs. Make sure you have an open conversation with this "
+        f"user in the Telegram account whose session string is configured."
+    )
 
 
 async def read_channel_messages(
