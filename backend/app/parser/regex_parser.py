@@ -9,6 +9,7 @@ Supported price formats:
   "16/256 black esim 101000"
   "AirPods Pro 2 USB-C 14500"
   "Canon G7 X Mark III Silver - 88000"
+  "**17 Pro Max 256 Blue (eSim) - 107200 **"
 """
 import logging
 import re
@@ -25,6 +26,9 @@ from app.parser.synonym_dict import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Minimum plausible price in RUB. Filters out noise like "1.00" or "256"
+_PRICE_MIN = 1000
 
 
 @dataclass
@@ -47,6 +51,26 @@ class ParsedOffer:
 class ParseResult:
     offers: list[ParsedOffer] = field(default_factory=list)
     unparsed_lines: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Markdown stripper
+# ---------------------------------------------------------------------------
+
+_MD_BOLD_ITALIC = re.compile(r'[*_]{1,3}')
+_EMOJI_FLAG = re.compile(
+    r'[\U0001F1E0-\U0001F1FF]{2}'  # flag emoji pairs
+    r'|[\U0001F300-\U0001FAFF]'    # misc emoji
+    r'|[\u2600-\u27BF]',           # misc symbols
+    re.UNICODE,
+)
+
+
+def _strip_markdown(text: str) -> str:
+    """Remove Telegram markdown bold/italic markers and emoji flags."""
+    text = _MD_BOLD_ITALIC.sub('', text)
+    text = re.sub(r'\s{2,}', ' ', text)
+    return text.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +121,17 @@ _MEMORY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# RAM/Storage combos: 8/256, 12/512, 16/1TB, 17/256 etc.
+# Also catches bare model-gen numbers like "16" or "17" that appear before "/NNN"
 _RAM_STORAGE_PATTERN = re.compile(
     r'\b\d{1,3}/(?:1tb|2tb|\d{2,4})\b',
+    re.IGNORECASE,
+)
+
+# Model-generation prefix that should NOT be treated as price: "16 256", "17 256"
+# (two-digit number immediately followed by a memory size without dash)
+_MODEL_GEN_MEMORY = re.compile(
+    r'(?<![\d.])\b(1[2-9]|20)\s+(32|64|128|256|512|1024)\b',
     re.IGNORECASE,
 )
 
@@ -140,16 +173,14 @@ _CHAT_KEYWORDS = [
     "hello", "hi ", "hey ", "thanks", "спасиб", "бро",
 ]
 
-# Patterns that signal a real price message (at least one must match)
 _PRICE_SIGNAL = re.compile(
-    r'\d{4,7}'                               # bare number ≥4 digits (price range)
-    r'|\d{2,3}[.,]\d{3}'                     # 96.500 / 96,500
-    r'|\d{2,3}\s\d{3}'                       # 91 500
+    r'\d{4,7}'
+    r'|\d{2,3}[.,]\d{3}'
+    r'|\d{2,3}\s\d{3}'
     r'|\$|€|₽|\busd\b|\beur\b|\bруб\b',
     re.IGNORECASE,
 )
 
-# System / bot messages that should never reach LLM
 _SYSTEM_MESSAGE_PATTERNS = re.compile(
     r'^(?:прайс|price)\s*[!.]?$'
     r'|прайс\s+(?:открыт|закрыт)'
@@ -164,27 +195,15 @@ _SYSTEM_MESSAGE_PATTERNS = re.compile(
 
 
 def is_obviously_not_price_message(text: str) -> bool:
-    """
-    Быстрый pre-filter перед regex и LLM.
-    Возвращает True если сообщение точно не содержит товарных позиций.
-    """
     if not text or not text.strip():
         return True
-
     stripped = text.strip()
-
-    # Системные сообщения бота (Прайс, Прайс открыт!, Нажмите кнопку...)
     if _SYSTEM_MESSAGE_PATTERNS.search(stripped):
         return True
-
-    # Слишком короткое сообщение без цифр
     if len(stripped) < 6 and not any(c.isdigit() for c in stripped):
         return True
-
-    # Нет ни одного признака цены
     if not _PRICE_SIGNAL.search(stripped):
         return True
-
     return False
 
 
@@ -197,12 +216,16 @@ def parse_message(text: str) -> ParseResult:
             continue
         if _is_noise_line(stripped):
             continue
-        offer = _parse_single_line(stripped)
-        if offer and offer.model and offer.price and offer.price > 0:
-            offer.raw_line = stripped
+        # Strip markdown before parsing
+        clean = _strip_markdown(stripped)
+        if not clean or len(clean) < 3:
+            continue
+        offer = _parse_single_line(clean)
+        if offer and offer.model and offer.price and offer.price >= _PRICE_MIN:
+            offer.raw_line = stripped  # keep original for logging
             result.offers.append(offer)
-        elif stripped and len(stripped) > 5:
-            result.unparsed_lines.append(stripped)
+        elif clean and len(clean) > 5:
+            result.unparsed_lines.append(clean)
     return result
 
 
@@ -218,23 +241,19 @@ def _split_into_lines(text: str) -> list[str]:
 def _is_noise_line(line: str) -> bool:
     stripped = line.strip()
     lower = stripped.lower()
-
     for pat in _NOISE_PATTERNS:
         if pat.search(stripped):
             return True
-
-    if not any(c.isdigit() for c in stripped):
+    clean = _strip_markdown(stripped)
+    if not any(c.isdigit() for c in clean):
         return True
-
     for ns in _NOISE_STARTS:
         if lower.startswith(ns):
             return True
-
     if len(stripped) < 60:
         for kw in _CHAT_KEYWORDS:
             if kw in lower:
                 return True
-
     return False
 
 
@@ -298,11 +317,20 @@ def _resolve_brand(line: Optional[str]) -> str:
 
 def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int, int]]]:
     excluded: set[str] = set()
+
+    # Exclude memory sizes
     for m in _MEMORY_PATTERN.finditer(text):
         excluded.add(re.sub(r'[^\d]', '', m.group(0)))
+
+    # Exclude RAM/storage combos (8/256, 12/512)
     for m in _RAM_STORAGE_PATTERN.finditer(text):
         for part in re.split(r'/', m.group(0).lower()):
             excluded.add(re.sub(r'[^\d]', '', part))
+
+    # Exclude model-gen + memory patterns ("16 256", "17 512")
+    for m in _MODEL_GEN_MEMORY.finditer(text):
+        excluded.add(m.group(1).strip())
+        excluded.add(m.group(2).strip())
 
     def _try_parse(num_str: str, curr_raw: str) -> Optional[tuple[float, str]]:
         normalized = _normalize_price_str(num_str)
@@ -312,9 +340,11 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
             val = float(normalized)
         except ValueError:
             return None
-        if val <= 0:
-            return None
+        # Reject prices below minimum threshold
         currency = _resolve_currency(curr_raw) if curr_raw else "RUB"
+        min_val = 100 if currency in ("USD", "EUR") else _PRICE_MIN
+        if val < min_val:
+            return None
         return val, currency
 
     for m in _PRICE_AFTER_DASH.finditer(text):
@@ -334,7 +364,7 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
 
     for m in _PRICE_SPACED.finditer(text):
         result = _try_parse(m.group(1), "")
-        if result and result[0] >= 1000:
+        if result and result[0] >= _PRICE_MIN:
             return result[0], result[1], (m.start(), m.end())
 
     return None, "RUB", None
@@ -370,8 +400,7 @@ def _extract_model_with_span(text: str) -> tuple[Optional[tuple[str, str, str]],
 
 
 def _extract_memory(text: str) -> Optional[str]:
-    matches = list(_MEMORY_PATTERN.finditer(text))
-    for m in matches:
+    for m in _MEMORY_PATTERN.finditer(text):
         raw = m.group(1) if m.group(1) else m.group(2) + "tb"
         return MEMORY_ALIASES.get(raw.lower(), raw.upper() + "GB")
     return None
