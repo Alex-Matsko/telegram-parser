@@ -28,10 +28,19 @@ class Settings(BaseSettings):
     telegram_api_hash: str = ""
     telegram_session_string: str = ""
 
-    # LLM
+    # LLM — primary model
     llm_api_url: str = "https://api.openai.com/v1"
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
+
+    # LLM — fallback models tried in order when primary returns 429/404.
+    # Comma-separated, e.g.:
+    # LLM_FALLBACK_MODELS=meta-llama/llama-3.3-70b-instruct:free,mistralai/mistral-7b-instruct:free
+    llm_fallback_models: str = (
+        "meta-llama/llama-3.3-70b-instruct:free,"
+        "mistralai/mistral-7b-instruct:free,"
+        "qwen/qwen2.5-vl-72b-instruct:free"
+    )
 
     # App
     secret_key: str = "changeme"
@@ -42,6 +51,11 @@ class Settings(BaseSettings):
     # Collector: how many days back to fetch on first run (and hard cutoff on every run)
     # Override via COLLECTOR_HISTORY_DAYS=14 in .env
     collector_history_days: int = 7
+
+    @property
+    def llm_fallback_models_list(self) -> list[str]:
+        """Return fallback models as a list, filtering empty strings."""
+        return [m.strip() for m in self.llm_fallback_models.split(",") if m.strip()]
 
     @field_validator("telegram_api_id")
     @classmethod
