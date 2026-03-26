@@ -17,7 +17,7 @@ export default function HistoryPage() {
   const id = Number(productId);
   const [days, setDays] = useState(3);
 
-  const { data: productData } = useQuery({
+  const { data: product } = useQuery({
     queryKey: ['productDetail', id],
     queryFn: () => getProductDetail(id),
     enabled: !!id,
@@ -35,8 +35,7 @@ export default function HistoryPage() {
     enabled: !!id,
   });
 
-  const product = productData?.product;
-  const currency = product?.sku_key?.includes('USD') ? 'USD' : 'RUB';
+  const currency = 'RUB';
 
   return (
     <div className="p-4 max-w-6xl mx-auto space-y-4">
