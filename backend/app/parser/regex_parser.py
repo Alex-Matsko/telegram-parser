@@ -10,6 +10,7 @@ Supported price formats:
   "AirPods Pro 2 USB-C 14500"
   "Canon G7 X Mark III Silver - 88000"
   "**17 Pro Max 256 Blue (eSim) - 107200 **"
+  "iPad 11 128GB Blue - 28400"
 """
 import logging
 import re
@@ -27,7 +28,6 @@ from app.parser.synonym_dict import (
 
 logger = logging.getLogger(__name__)
 
-# Minimum plausible price in RUB. Filters out noise like "1.00" or "256"
 _PRICE_MIN = 1000
 
 
@@ -54,21 +54,23 @@ class ParseResult:
 
 
 # ---------------------------------------------------------------------------
-# Markdown stripper
+# Markdown / emoji stripper
 # ---------------------------------------------------------------------------
 
 _MD_BOLD_ITALIC = re.compile(r'[*_]{1,3}')
-_EMOJI_FLAG = re.compile(
-    r'[\U0001F1E0-\U0001F1FF]{2}'  # flag emoji pairs
-    r'|[\U0001F300-\U0001FAFF]'    # misc emoji
-    r'|[\u2600-\u27BF]',           # misc symbols
+# Emoji flag pairs like 🇺🇸 🇷🇺 🇮🇳 — these must NOT be treated as currency signals
+_EMOJI_FLAGS = re.compile(r'[\U0001F1E0-\U0001F1FF]{2}', re.UNICODE)
+_EMOJI_MISC = re.compile(
+    r'[\U0001F300-\U0001FAFF]'
+    r'|[\u2600-\u27BF]',
     re.UNICODE,
 )
 
 
 def _strip_markdown(text: str) -> str:
-    """Remove Telegram markdown bold/italic markers and emoji flags."""
+    """Remove Telegram markdown markers. Keep emoji flags stripped to avoid currency misdetection."""
     text = _MD_BOLD_ITALIC.sub('', text)
+    text = _EMOJI_FLAGS.sub('', text)   # 🇺🇸 🇷🇺 etc — not currency
     text = re.sub(r'\s{2,}', ' ', text)
     return text.strip()
 
@@ -121,17 +123,17 @@ _MEMORY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# RAM/Storage combos: 8/256, 12/512, 16/1TB, 17/256 etc.
-# Also catches bare model-gen numbers like "16" or "17" that appear before "/NNN"
+# RAM/Storage combos: 8/256, 12/512, 16/1TB etc.
 _RAM_STORAGE_PATTERN = re.compile(
     r'\b\d{1,3}/(?:1tb|2tb|\d{2,4})\b',
     re.IGNORECASE,
 )
 
-# Model-generation prefix that should NOT be treated as price: "16 256", "17 256"
-# (two-digit number immediately followed by a memory size without dash)
+# Bare model generation number followed immediately by memory size
+# Covers: "13 128", "14 256", "11 128" (iPad gen), "17 512" etc.
+# Must NOT match when followed by a dash+price like "- 28400"
 _MODEL_GEN_MEMORY = re.compile(
-    r'(?<![\d.])\b(1[2-9]|20)\s+(32|64|128|256|512|1024)\b',
+    r'(?<![\d.])\b(\d{1,2})\s+(32|64|128|256|512|1024)(?=\s|$|\s*[a-zA-Z])',
     re.IGNORECASE,
 )
 
@@ -155,10 +157,7 @@ _NOISE_PATTERNS = [
     re.compile(r'https?://', re.IGNORECASE),
     re.compile(r'\+7[\s\-]?\(?\d{3}\)?'),
     re.compile(r'\b8[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}'),
-    re.compile(
-        r'(?:нажмите|кнопку|прайс открыт|прайс закрыт)',
-        re.IGNORECASE,
-    ),
+    re.compile(r'(?:нажмите|кнопку|прайс открыт|прайс закрыт)', re.IGNORECASE),
 ]
 
 _NOISE_STARTS = [
@@ -216,13 +215,12 @@ def parse_message(text: str) -> ParseResult:
             continue
         if _is_noise_line(stripped):
             continue
-        # Strip markdown before parsing
         clean = _strip_markdown(stripped)
         if not clean or len(clean) < 3:
             continue
         offer = _parse_single_line(clean)
         if offer and offer.model and offer.price and offer.price >= _PRICE_MIN:
-            offer.raw_line = stripped  # keep original for logging
+            offer.raw_line = stripped
             result.offers.append(offer)
         elif clean and len(clean) > 5:
             result.unparsed_lines.append(clean)
@@ -318,19 +316,21 @@ def _resolve_brand(line: Optional[str]) -> str:
 def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int, int]]]:
     excluded: set[str] = set()
 
-    # Exclude memory sizes
     for m in _MEMORY_PATTERN.finditer(text):
         excluded.add(re.sub(r'[^\d]', '', m.group(0)))
 
-    # Exclude RAM/storage combos (8/256, 12/512)
     for m in _RAM_STORAGE_PATTERN.finditer(text):
         for part in re.split(r'/', m.group(0).lower()):
             excluded.add(re.sub(r'[^\d]', '', part))
 
-    # Exclude model-gen + memory patterns ("16 256", "17 512")
+    # Exclude bare gen+memory combos: "11 128", "13 128", "iPad 11 128"
+    # but only when they are NOT adjacent to a dash+price pattern
     for m in _MODEL_GEN_MEMORY.finditer(text):
-        excluded.add(m.group(1).strip())
-        excluded.add(m.group(2).strip())
+        # Check there's no dash-price immediately after the memory number
+        after = text[m.end():].lstrip()
+        if not re.match(r'[—\-]\s*\d{4,}', after):
+            excluded.add(m.group(1).strip())
+            excluded.add(m.group(2).strip())
 
     def _try_parse(num_str: str, curr_raw: str) -> Optional[tuple[float, str]]:
         normalized = _normalize_price_str(num_str)
@@ -340,7 +340,6 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
             val = float(normalized)
         except ValueError:
             return None
-        # Reject prices below minimum threshold
         currency = _resolve_currency(curr_raw) if curr_raw else "RUB"
         min_val = 100 if currency in ("USD", "EUR") else _PRICE_MIN
         if val < min_val:
