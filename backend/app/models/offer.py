@@ -8,6 +8,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -22,6 +23,8 @@ class Offer(Base):
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False)
     product_id = Column(Integer, ForeignKey("product_catalog.id"), nullable=False)
     raw_message_id = Column(Integer, ForeignKey("raw_messages.id"), nullable=True)
+    # Verbatim line from the price list that produced this offer
+    raw_line = Column(Text, nullable=True)
     price = Column(Numeric(12, 2), nullable=False)
     currency = Column(String(10), default="RUB", nullable=False)
     availability = Column(String(50), nullable=True)

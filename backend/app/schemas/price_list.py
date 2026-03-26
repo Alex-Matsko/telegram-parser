@@ -19,7 +19,9 @@ class PriceListItem(BaseModel):
     best_supplier: str
     best_supplier_id: int
     second_price: Optional[Decimal] = None
+    second_supplier: Optional[str] = None
     third_price: Optional[Decimal] = None
+    third_supplier: Optional[str] = None
     offer_count: int
     price_change_3d: Optional[Decimal] = None
     price_change_3d_pct: Optional[float] = None
@@ -34,18 +36,6 @@ class PriceListResponse(BaseModel):
     pages: int
 
 
-class PriceListDetailItem(BaseModel):
-    product_id: int
-    normalized_name: str
-    category: str
-    brand: str
-    model: str
-    memory: Optional[str] = None
-    color: Optional[str] = None
-    condition: str = "new"
-    offers: list["OfferDetail"]
-
-
 class OfferDetail(BaseModel):
     offer_id: int
     supplier_id: int
@@ -56,6 +46,24 @@ class OfferDetail(BaseModel):
     confidence: float
     is_current: bool
     updated_at: datetime
+    # Source context — first-party traceability
+    raw_line: Optional[str] = None          # конкретная строка из прайса
+    source_name: Optional[str] = None       # название канала/источника
+    channel_url: Optional[str] = None       # ссылка на Telegram-канал
+    message_date: Optional[datetime] = None # дата сообщения
+    raw_message_id: Optional[int] = None    # ID raw_message для дополнительного поиска
+
+
+class PriceListDetailItem(BaseModel):
+    product_id: int
+    normalized_name: str
+    category: str
+    brand: str
+    model: str
+    memory: Optional[str] = None
+    color: Optional[str] = None
+    condition: str = "new"
+    offers: list[OfferDetail]
 
 
 class PriceHistoryPoint(BaseModel):

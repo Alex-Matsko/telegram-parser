@@ -8,10 +8,12 @@ from typing import Optional
 
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.models.offer import Offer
 from app.models.price_history import PriceHistory
 from app.models.product_catalog import ProductCatalog
+from app.models.raw_message import RawMessage
 from app.models.source import Source
 from app.models.supplier import Supplier
 from app.schemas.price_list import (
@@ -167,15 +169,20 @@ async def get_product_detail(
     if not product:
         return None
 
+    # JOIN offer -> supplier + LEFT JOIN raw_message -> source
+    # to get source context (raw_line, source name, channel url, message date)
     offers_result = await session.execute(
-        select(Offer, Supplier.display_name)
+        select(Offer, Supplier.display_name, RawMessage, Source)
         .join(Supplier, Offer.supplier_id == Supplier.id)
+        .outerjoin(RawMessage, Offer.raw_message_id == RawMessage.id)
+        .outerjoin(Source, RawMessage.source_id == Source.id)
         .where(and_(Offer.product_id == product_id, Offer.is_current == True))  # noqa: E712
         .order_by(Offer.price)
     )
 
-    offers = [
-        OfferDetail(
+    offers = []
+    for offer, display_name, raw_msg, source in offers_result.all():
+        offers.append(OfferDetail(
             offer_id=offer.id,
             supplier_id=offer.supplier_id,
             supplier_name=display_name,
@@ -185,9 +192,12 @@ async def get_product_detail(
             confidence=offer.detected_confidence,
             is_current=offer.is_current,
             updated_at=offer.updated_at,
-        )
-        for offer, display_name in offers_result.all()
-    ]
+            raw_line=offer.raw_line if hasattr(offer, "raw_line") else None,
+            source_name=source.display_name if source else None,
+            channel_url=source.channel_url if source else None,
+            message_date=raw_msg.message_date if raw_msg else None,
+            raw_message_id=raw_msg.id if raw_msg else None,
+        ))
 
     return PriceListDetailItem(
         product_id=product.id,
@@ -283,8 +293,6 @@ async def get_price_chart_data(
 
 
 async def get_dashboard_stats(session: AsyncSession) -> DashboardStats:
-    from app.models.raw_message import RawMessage
-
     total_products = (await session.execute(select(func.count(ProductCatalog.id)))).scalar() or 0
     total_sources = (await session.execute(select(func.count(Source.id)))).scalar() or 0
     active_sources = (await session.execute(
@@ -324,7 +332,6 @@ async def _batch_best_suppliers(
     session: AsyncSession,
     product_ids: list[int],
 ) -> dict[int, tuple[str, int, Optional[str], Optional[str]]]:
-    """Get best, 2nd, 3rd supplier display_name per product."""
     if not product_ids:
         return {}
 
