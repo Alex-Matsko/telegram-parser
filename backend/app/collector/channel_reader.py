@@ -35,21 +35,37 @@ async def read_channel_messages(
     """
     saved_count = 0
     skipped_old = 0
+    skipped_empty = 0
 
-    # Hard cutoff — read from settings, configurable via COLLECTOR_HISTORY_DAYS in .env
     history_days = settings.collector_history_days
     cutoff_date = datetime.now(timezone.utc) - timedelta(days=history_days)
+    is_first_run = source.last_message_id is None
+    run_type = "first-run" if is_first_run else "incremental"
+
+    logger.info(
+        f"[{source.source_name}] ▶ START {run_type} | "
+        f"telegram_id={source.telegram_id} | "
+        f"last_message_id={source.last_message_id} | "
+        f"cutoff={cutoff_date.date()} (history_days={history_days}) | "
+        f"limit={limit}"
+    )
 
     try:
+        logger.debug(f"[{source.source_name}] Resolving entity for telegram_id={source.telegram_id} ...")
         entity = await client.get_entity(source.telegram_id)
+        logger.info(
+            f"[{source.source_name}] ✔ Entity resolved: "
+            f"type={type(entity).__name__} | id={getattr(entity, 'id', '?')} | "
+            f"title={getattr(entity, 'title', getattr(entity, 'username', '?'))}"
+        )
 
-        is_first_run = source.last_message_id is None
         min_id = source.last_message_id or 0
-
-        # On first run pass offset_date so Telethon starts near the cutoff
-        # and doesn't stream thousands of old messages over the wire.
-        # On incremental runs min_id is already the right lower bound.
         offset_date = cutoff_date if is_first_run else None
+
+        logger.debug(
+            f"[{source.source_name}] Starting iter_messages: "
+            f"min_id={min_id} | offset_date={offset_date} | reverse=True"
+        )
 
         messages: list[Message] = []
         async for message in client.iter_messages(
@@ -60,28 +76,37 @@ async def read_channel_messages(
             reverse=True,
         ):
             if not message.text:
+                skipped_empty += 1
                 continue
 
-            # Hard date guard — drop anything older than cutoff regardless
-            # of how Telethon interpreted offset_date or min_id.
             if message.date and message.date < cutoff_date:
                 skipped_old += 1
+                logger.debug(
+                    f"[{source.source_name}] ⏭ Skipped old message "
+                    f"id={message.id} date={message.date.date()}"
+                )
                 continue
 
             messages.append(message)
-
-        if skipped_old:
-            logger.info(
-                f"[{source.source_name}] Skipped {skipped_old} messages older "
-                f"than {history_days} days (cutoff: {cutoff_date.date()})"
+            logger.debug(
+                f"[{source.source_name}] + Queued message id={message.id} "
+                f"date={message.date} len={len(message.text)} chars"
             )
 
+        logger.info(
+            f"[{source.source_name}] Fetch complete: "
+            f"queued={len(messages)} | skipped_old={skipped_old} | skipped_empty={skipped_empty}"
+        )
+
         if not messages:
-            logger.info(f"No new messages for source {source.source_name} (id={source.id})")
+            logger.info(
+                f"[{source.source_name}] ✔ No new messages — source is up to date "
+                f"(id={source.id})"
+            )
             return 0
 
         last_msg_id = source.last_message_id or 0
-        for msg in messages:
+        for idx, msg in enumerate(messages):
             sender_name = await _get_sender_name(msg)
             raw_payload = {
                 "message_id": msg.id,
@@ -89,6 +114,12 @@ async def read_channel_messages(
                 "forward_from": str(msg.forward) if msg.forward else None,
                 "reply_to": msg.reply_to_msg_id if msg.reply_to else None,
             }
+
+            logger.debug(
+                f"[{source.source_name}] Saving [{idx + 1}/{len(messages)}] "
+                f"msg_id={msg.id} | sender={sender_name} | "
+                f"date={msg.date} | text_preview={msg.text[:80]!r}"
+            )
 
             stmt = pg_insert(RawMessage).values(
                 source_id=source.id,
@@ -105,6 +136,9 @@ async def read_channel_messages(
             result = await session.execute(stmt)
             if result.rowcount > 0:
                 saved_count += 1
+                logger.debug(f"[{source.source_name}] ✔ Saved msg_id={msg.id}")
+            else:
+                logger.debug(f"[{source.source_name}] ⚠ Duplicate skipped msg_id={msg.id}")
 
             if msg.id > last_msg_id:
                 last_msg_id = msg.id
@@ -116,12 +150,17 @@ async def read_channel_messages(
         await session.flush()
 
         logger.info(
-            f"[{'first-run' if is_first_run else 'incremental'}] "
-            f"Saved {saved_count} new messages from {source.source_name} (id={source.id})"
+            f"[{source.source_name}] ✅ DONE [{run_type}] | "
+            f"saved={saved_count} | duplicates={len(messages) - saved_count} | "
+            f"new last_message_id={last_msg_id}"
         )
 
     except Exception as e:
-        logger.error(f"Error reading source {source.source_name} (id={source.id}): {e}")
+        logger.error(
+            f"[{source.source_name}] ❌ FAILED (id={source.id}) | "
+            f"error={type(e).__name__}: {e}",
+            exc_info=True,
+        )
         source.error_count = (source.error_count or 0) + 1
         source.last_error = str(e)[:1000]
         await session.flush()
