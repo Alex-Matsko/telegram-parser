@@ -16,6 +16,7 @@ Supported price formats:
   "16 256 black 62700`"                <- backtick artifact
   "17 256 Black Sim+eSim 61700"        <- price at end, no dash
   "13100.00 ₽"                         <- kopeck format
+  "16 256 Black - 62700"               <- price AFTER dash separator only
 """
 import logging
 import re
@@ -116,6 +117,30 @@ def _remove_qty_prefix(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Price zone splitter
+# KEY FIX: isolate the RIGHT side of a dash/pipe separator as the price zone.
+# This prevents memory values (256, 512) from being mistaken for spaced prices.
+# E.g.: "16 256 Black - 62700"  →  price_zone = "62700"
+#       "17 256 Blue | 89000"  →  price_zone = "89000"
+#       "16 256 Black 62700"   →  price_zone = full text (no separator found)
+# ---------------------------------------------------------------------------
+
+_PRICE_ZONE_SEPARATOR = re.compile(r'\s*[—\-|]\s*')
+
+
+def _get_price_zone(text: str) -> str:
+    """
+    Return the substring to search for price.
+    If a dash/pipe separator exists, return everything to its right.
+    Otherwise return the full text (price is at the end of line).
+    """
+    parts = _PRICE_ZONE_SEPARATOR.split(text, maxsplit=1)
+    if len(parts) == 2 and parts[1].strip():
+        return parts[1].strip()
+    return text
+
+
+# ---------------------------------------------------------------------------
 # Price patterns (priority order)
 # ---------------------------------------------------------------------------
 
@@ -138,12 +163,13 @@ _PRICE_EXPLICIT_BEFORE = re.compile(
     re.IGNORECASE,
 )
 
+# SCOPED: _PRICE_SPACED now runs on price_zone only (right of separator)
+# to prevent "256 512" or "16 256" from being captured as spaced prices.
 _PRICE_SPACED = re.compile(
     r'(?<!\d)(\d{2,3}\s\d{3})(?:\b|$)',
 )
 
-# Last-resort: 5-6 digit number at end of line (no dash, no currency symbol)
-# Used for formats like "17 256 Black Sim+eSim 61700" or "Air 13 Midnight 84500"
+# Last-resort: 5-6 digit number at end of price_zone
 _PRICE_TRAILING = re.compile(
     r'(?<!\d)(\d{5,6})\s*$',
 )
@@ -272,7 +298,7 @@ def _split_into_lines(text: str) -> list[str]:
     lines = text.split("\n")
     expanded = []
     for line in lines:
-        parts = re.split(r'[;|]', line)
+        parts = re.split(r'[;]', line)
         expanded.extend(parts)
     return expanded
 
@@ -391,6 +417,7 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
             return None
         return val, currency
 
+    # --- Priority 1: explicit dash/currency patterns on full text ---
     for m in _PRICE_AFTER_DASH.finditer(text):
         result = _try_parse(m.group(1), (m.group(2) or "").lower())
         if result:
@@ -406,14 +433,20 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
         if result:
             return result[0], result[1], (m.start(), m.end())
 
-    for m in _PRICE_SPACED.finditer(text):
+    # --- Priority 2: spaced price & trailing — scoped to price_zone ONLY ---
+    # price_zone = right side of separator (dash/pipe) if present, else full text.
+    # This prevents memory values like "256", "512" from being read as part of
+    # a spaced price (e.g. "256 627" from "16 256 Black - 62700").
+    price_zone = _get_price_zone(text)
+
+    for m in _PRICE_SPACED.finditer(price_zone):
         result = _try_parse(m.group(1), "")
         if result and result[0] >= _PRICE_MIN:
             return result[0], result[1], (m.start(), m.end())
 
-    # Last resort: 5-6 digit number at end of line
+    # Last resort: 5-6 digit number at end of price_zone
     # Handles: "Air 13 Midnight 84500", "17 256 Black Sim+eSim 61700"
-    m = _PRICE_TRAILING.search(text)
+    m = _PRICE_TRAILING.search(price_zone)
     if m:
         result = _try_parse(m.group(1), "")
         if result:
