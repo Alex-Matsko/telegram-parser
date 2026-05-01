@@ -28,8 +28,8 @@ celery_app.conf.update(
     enable_utc=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
-    task_soft_time_limit=300,
-    task_time_limit=360,
+    task_soft_time_limit=3600,
+    task_time_limit=3660,
     beat_schedule={
         "collect-from-all-sources": {
             "task": "app.tasks.collect.collect_from_all_sources",
@@ -41,7 +41,7 @@ celery_app.conf.update(
         },
         "parse-pending-messages": {
             "task": "app.tasks.parse.parse_pending_messages",
-            "schedule": 60,  # каждую минуту вместо 5
+            "schedule": 60,
         },
         "refresh-price-list": {
             "task": "app.tasks.aggregate.refresh_price_list",
@@ -63,7 +63,6 @@ def setup_worker_logging(**kwargs):
         format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    # Import here to avoid circular imports at module load time
     from app.api.logs import _install_handler
     _install_handler()
     logging.getLogger(__name__).info(
