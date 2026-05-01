@@ -28,9 +28,14 @@ class Settings(BaseSettings):
     telegram_api_hash: str = ""
     telegram_session_string: str = ""
 
-    # Telegram SOCKS5 proxy (optional)
+    # Telegram SOCKS5 proxy — single proxy (legacy)
     telegram_proxy_host: str = ""
     telegram_proxy_port: int = 0
+
+    # Telegram SOCKS5 proxy pool — comma-separated host:port pairs
+    # Example: 1.2.3.4:1080,5.6.7.8:1080,9.10.11.12:1080
+    # If set, takes priority over single proxy. Tried in order on failure.
+    telegram_proxy_list: str = ""
 
     # LLM — Groq only, verified active models as of 2026-03
     # Full list: https://console.groq.com/docs/models
