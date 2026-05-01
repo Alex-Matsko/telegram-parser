@@ -30,24 +30,18 @@ export default function LogViewer() {
   const [minLevel, setMinLevel] = useState('INFO');
   const [loggerFilter, setLoggerFilter] = useState('');
   const [limit, setLimit] = useState(300);
-  // autoRefresh: controls polling
   const [autoRefresh, setAutoRefresh] = useState(true);
-  // userPaused: true when user manually scrolled away from top — stops auto-scroll to top
-  const [userPaused, setUserPaused] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
   const topRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  // Track if the last scroll was from the user (not programmatic)
-  const programmaticScroll = useRef(false);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const data = await getLogs({ level: minLevel, limit, logger_filter: loggerFilter || undefined });
-      // Reverse so newest records appear at the top
       setRecords([...data.records].reverse());
       setTotal(data.total);
     } catch (e: unknown) {
@@ -57,39 +51,13 @@ export default function LogViewer() {
     }
   }, [minLevel, limit, loggerFilter]);
 
-  // Initial load & on filter change
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
-  // Auto-refresh polling
   useEffect(() => {
     if (!autoRefresh) return;
     const id = setInterval(fetchLogs, POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [autoRefresh, fetchLogs]);
-
-  // Scroll to top after new data — only if user hasn't manually scrolled away
-  useEffect(() => {
-    if (!userPaused && topRef.current) {
-      programmaticScroll.current = true;
-      topRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [records, userPaused]);
-
-  // Detect manual scroll: if user scrolls down from top → pause auto-scroll
-  const handleScroll = useCallback(() => {
-    if (programmaticScroll.current) {
-      programmaticScroll.current = false;
-      return;
-    }
-    const el = containerRef.current;
-    if (!el) return;
-    // scrollTop > 40px means user scrolled away from top
-    if (el.scrollTop > 40) {
-      setUserPaused(true);
-    } else {
-      setUserPaused(false);
-    }
-  }, []);
 
   const handleClear = async () => {
     if (!confirm('Очистить буфер логов?')) return;
@@ -104,8 +72,6 @@ export default function LogViewer() {
   };
 
   const scrollToTop = () => {
-    setUserPaused(false);
-    programmaticScroll.current = true;
     topRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
@@ -197,18 +163,12 @@ export default function LogViewer() {
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
         </button>
 
-        {/* Scroll-to-top / resume auto-scroll */}
         <button
           onClick={scrollToTop}
-          title={userPaused ? 'Вернуться к новым логам' : 'В начало'}
-          className={`p-1.5 rounded border text-xs flex items-center gap-1 ${
-            userPaused
-              ? 'border-accent text-accent bg-accent/10 animate-pulse'
-              : 'border-border text-gray-400 hover:text-gray-200'
-          }`}
+          title="В начало (новые логи)"
+          className="p-1.5 rounded border border-border text-gray-400 hover:text-gray-200"
         >
           <ChevronsUp className="w-3.5 h-3.5" />
-          {userPaused && <span>Новые</span>}
         </button>
 
         <button
@@ -231,7 +191,6 @@ export default function LogViewer() {
       {/* Log list — newest FIRST (top) */}
       <div
         ref={containerRef}
-        onScroll={handleScroll}
         className="flex-1 overflow-y-auto font-mono text-xs leading-5 px-4 py-2 space-y-0.5"
       >
         <div ref={topRef} />
@@ -256,7 +215,6 @@ export default function LogViewer() {
       <div className="px-4 py-1.5 bg-surface-800 border-t border-border flex items-center gap-4 text-[10px] text-gray-500">
         <span>Показано: {records.length}</span>
         <span>Авто-обновление: {autoRefresh ? `каждые ${POLL_INTERVAL_MS / 1000}с` : 'выключено'}</span>
-        {userPaused && <span className="text-yellow-500">▲ Прокрутка на паузе — нажми «Новые» чтобы вернуться</span>}
         {loading && <span className="text-accent">Загрузка...</span>}
       </div>
     </div>
