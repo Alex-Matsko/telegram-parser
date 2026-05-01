@@ -16,6 +16,16 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _get_proxy():
+    """Return proxy tuple for Telethon if configured, else None."""
+    host = getattr(settings, "telegram_proxy_host", None)
+    port = getattr(settings, "telegram_proxy_port", None)
+    if host and port:
+        import socks
+        return (socks.SOCKS5, host, int(port))
+    return None
+
+
 @asynccontextmanager
 async def get_telegram_client():
     """
@@ -26,10 +36,15 @@ async def get_telegram_client():
         async with get_telegram_client() as client:
             ...
     """
+    proxy = _get_proxy()
+    if proxy:
+        logger.info("Telegram client using SOCKS5 proxy %s:%s", proxy[1], proxy[2])
+
     client = TelegramClient(
         StringSession(settings.telegram_session_string),
         settings.telegram_api_id,
         settings.telegram_api_hash,
+        proxy=proxy,
     )
     await client.connect()
 
