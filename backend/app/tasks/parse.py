@@ -22,8 +22,8 @@ def _run_async(coro):
     bind=True,
     max_retries=2,
     default_retry_delay=30,
-    soft_time_limit=300,
-    time_limit=360,
+    soft_time_limit=600,
+    time_limit=660,
 )
 def parse_pending_messages(self):
     """
@@ -50,7 +50,7 @@ def parse_single_message(message_id: int):
 
 
 async def _parse_pending_messages_async() -> dict:
-    """Parse all pending raw messages — batch of 100, LLM calls run in parallel."""
+    """Parse pending raw messages — batch of 20, LLM calls run in parallel."""
     from sqlalchemy import select
 
     from app.config import settings
@@ -73,7 +73,7 @@ async def _parse_pending_messages_async() -> dict:
             select(RawMessage)
             .where(RawMessage.parse_status == "pending")
             .order_by(RawMessage.created_at)
-            .limit(100)
+            .limit(20)
         )
         messages = result.scalars().all()
 
@@ -94,7 +94,7 @@ async def _parse_pending_messages_async() -> dict:
                 await get_or_create_supplier_for_source(source, session)
         await session.flush()
 
-        max_llm_calls = getattr(settings, "llm_max_per_batch", 50)
+        max_llm_calls = getattr(settings, "llm_max_per_batch", 20)
 
         # ------------------------------------------------------------------ #
         # Шаг 1: Regex pre-pass — быстрый прогон всех сообщений               #
