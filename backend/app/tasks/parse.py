@@ -98,12 +98,14 @@ async def _parse_pending_messages_async() -> dict:
             try:
                 source = sources_map.get(msg.source_id)
                 parsing_strategy = source.parsing_strategy if source else "auto"
+                line_format = source.line_format if source else None
                 supplier_id = source.supplier_id if source else None
 
                 parse_result, skipped, used_llm, system_skip = await _process_single_message(
                     session=session,
                     message=msg,
                     parsing_strategy=parsing_strategy,
+                    line_format=line_format,
                     supplier_id=supplier_id,
                     confidence_threshold=settings.parser_confidence_threshold,
                     skip_unchanged=settings.skip_unchanged_prices,
@@ -161,6 +163,7 @@ async def _parse_single_message_async(message_id: int) -> dict:
         )
         source = source_result.scalar_one_or_none()
         parsing_strategy = source.parsing_strategy if source else "auto"
+        line_format = source.line_format if source else None
 
         if source and not source.supplier_id:
             await get_or_create_supplier_for_source(source, session)
@@ -172,6 +175,7 @@ async def _parse_single_message_async(message_id: int) -> dict:
             session=session,
             message=message,
             parsing_strategy=parsing_strategy,
+            line_format=line_format,
             supplier_id=supplier_id,
             confidence_threshold=settings.parser_confidence_threshold,
             skip_unchanged=settings.skip_unchanged_prices,
@@ -186,6 +190,7 @@ async def _process_single_message(
     session,
     message,
     parsing_strategy: str,
+    line_format: str | None,
     supplier_id: int | None,
     confidence_threshold: float,
     skip_unchanged: bool = True,
@@ -198,6 +203,7 @@ async def _process_single_message(
     """
     from app.models.offer import Offer
     from app.models.price_history import PriceHistory
+    from app.parser.channel_strategy import preprocess_by_strategy
     from app.parser.llm_parser import parse_with_llm
     from app.parser.normalizer import normalize_and_match
     from app.parser.regex_parser import is_obviously_not_price_message, parse_message
@@ -215,14 +221,27 @@ async def _process_single_message(
         await session.flush()
         return "failed", 0, False, True
 
+    # ------------------------------------------------------------------ #
+    # Channel-strategy preprocessing (pipe / table / passthrough)         #
+    # ------------------------------------------------------------------ #
+    preprocessed_text = preprocess_by_strategy(text, parsing_strategy, line_format)
+    if preprocessed_text != text:
+        logger.debug(
+            f"Message {message.id}: strategy='{parsing_strategy}' "
+            f"transformed text ({len(text)} -> {len(preprocessed_text)} chars)"
+        )
+
     offers_created = 0
     skipped_unchanged = 0
     used_llm = False
 
     # Step 1: Regex parser
+    # pipe/table strategies always use regex on the preprocessed text;
+    # LLM fallback is disabled for them (structure is already normalised).
     parsed_offers = []
-    if parsing_strategy in ("auto", "regex"):
-        parse_result = parse_message(text)
+    run_regex = parsing_strategy in ("auto", "regex", "pipe", "table")
+    if run_regex:
+        parse_result = parse_message(preprocessed_text)
         parsed_offers = parse_result.offers
         logger.debug(
             f"Regex parser: {len(parsed_offers)} offers, "
@@ -230,6 +249,8 @@ async def _process_single_message(
         )
 
     # Step 2: LLM fallback
+    # Pipe/table strategies skip LLM — if regex couldn't parse the
+    # pre-processed text, there's likely a format config issue.
     needs_llm = (
         parsing_strategy == "auto"
         and (
@@ -247,14 +268,14 @@ async def _process_single_message(
             return "needs_review", 0, False, False
 
         logger.debug(f"Falling back to LLM for message {message.id}")
-        llm_offers = await parse_with_llm(text)
+        llm_offers = await parse_with_llm(preprocessed_text)
         used_llm = True
         if llm_offers:
             parsed_offers = llm_offers
 
     if parsing_strategy == "llm":
         if llm_budget > 0:
-            parsed_offers = await parse_with_llm(text)
+            parsed_offers = await parse_with_llm(preprocessed_text)
             used_llm = True
         else:
             message.parse_status = "needs_review"

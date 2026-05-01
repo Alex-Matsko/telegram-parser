@@ -11,7 +11,12 @@ class SourceBase(BaseModel):
     supplier_id: Optional[int] = None
     is_active: bool = True
     poll_interval_minutes: int = 30
-    parsing_strategy: str = Field(default="auto", pattern="^(auto|regex|llm)$")
+    parsing_strategy: str = Field(default="auto", pattern="^(auto|regex|llm|pipe|table)$")
+    # Optional column-order hint for pipe/table strategies.
+    # Pipe:  "model|memory|color|price"
+    # Table: "model\tmemory\tprice"  (or space-separated field names)
+    # Supported field names: model memory color condition sim_type price currency skip
+    line_format: Optional[str] = None
     bot_scenario_id: Optional[int] = None
 
 
@@ -26,7 +31,8 @@ class SourceUpdate(BaseModel):
     supplier_id: Optional[int] = None
     is_active: Optional[bool] = None
     poll_interval_minutes: Optional[int] = None
-    parsing_strategy: Optional[str] = Field(None, pattern="^(auto|regex|llm)$")
+    parsing_strategy: Optional[str] = Field(None, pattern="^(auto|regex|llm|pipe|table)$")
+    line_format: Optional[str] = None
     bot_scenario_id: Optional[int] = None
 
 

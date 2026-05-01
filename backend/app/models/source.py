@@ -21,11 +21,16 @@ class Source(Base):
     type = Column(String(20), nullable=False)  # channel / group / bot
     telegram_id = Column(BigInteger, nullable=False, unique=True)
     source_name = Column(String(255), nullable=False)
-    channel_url = Column(String(512), nullable=True)  # e.g. https://t.me/channel_name
+    channel_url = Column(String(512), nullable=True)
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     poll_interval_minutes = Column(Integer, default=30, nullable=False)
-    parsing_strategy = Column(String(20), default="auto", nullable=False)  # auto / regex / llm
+    parsing_strategy = Column(String(20), default="auto", nullable=False)  # auto/regex/llm/pipe/table
+    # Optional format hint for pipe/table strategies.
+    # Pipe example:  "model|memory|color|price"
+    # Table example: "model\tmemory\tprice"
+    # Columns available: model, memory, color, condition, sim_type, price, currency, skip
+    line_format = Column(Text, nullable=True)
     bot_scenario_id = Column(Integer, ForeignKey("bot_scenarios.id"), nullable=True)
     last_read_at = Column(DateTime(timezone=True), nullable=True)
     last_message_id = Column(BigInteger, nullable=True)
