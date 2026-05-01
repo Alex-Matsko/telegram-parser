@@ -49,7 +49,8 @@ export async function getPriceChangeEvents(productId: number, days = 3): Promise
 
 // ==================== Sources ====================
 export async function getSources(): Promise<Source[]> {
-  if (USE_MOCKS) { await delay(200); return mockSources; }
+  // return a shallow copy so react-query detects reference change after mutations
+  if (USE_MOCKS) { await delay(200); return [...mockSources]; }
   return request('/sources');
 }
 
@@ -92,7 +93,10 @@ export async function createSource(data: SourceCreate): Promise<Source> {
   if (USE_MOCKS) {
     await delay(300);
     const newSource: Source = {
-      id: mockSources.length + 1, ...data,
+      id: Date.now(), // unique id to avoid collisions
+      type: data.type,
+      telegram_id: data.telegram_id,
+      source_name: data.source_name,
       supplier_id: data.supplier_id ?? null,
       is_active: data.is_active ?? true,
       poll_interval_minutes: data.poll_interval_minutes ?? 30,
@@ -112,7 +116,7 @@ export async function updateSource(id: number, data: Partial<SourceCreate>): Pro
     await delay(200);
     const idx = mockSources.findIndex(s => s.id === id);
     if (idx !== -1) Object.assign(mockSources[idx], data, { updated_at: new Date().toISOString() });
-    return mockSources[idx];
+    return { ...mockSources[idx] };
   }
   return request(`/sources/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 }
@@ -121,7 +125,7 @@ export async function toggleSource(id: number): Promise<Source> {
     await delay(150);
     const source = mockSources.find(s => s.id === id);
     if (source) source.is_active = !source.is_active;
-    return source!;
+    return { ...source! };
   }
   const source = await request<Source>(`/sources/${id}`);
   return request(`/sources/${id}`, { method: 'PUT', body: JSON.stringify({ is_active: !source.is_active }) });
@@ -138,7 +142,7 @@ export async function deleteSource(id: number, deleteMessages = false): Promise<
 
 // ==================== Suppliers ====================
 export async function getSuppliers(): Promise<Supplier[]> {
-  if (USE_MOCKS) { await delay(150); return mockSuppliers; }
+  if (USE_MOCKS) { await delay(150); return [...mockSuppliers]; }
   return request('/suppliers');
 }
 
@@ -174,13 +178,13 @@ export async function retryAllFailed(): Promise<{ queued: number }> {
 
 // ==================== Bot Scenarios ====================
 export async function getBotScenarios(): Promise<BotScenario[]> {
-  if (USE_MOCKS) { await delay(200); return mockBotScenarios; }
+  if (USE_MOCKS) { await delay(200); return [...mockBotScenarios]; }
   return request('/bot-scenarios');
 }
 export async function createBotScenario(data: { bot_name: string; scenario_name: string; steps_json: BotScenarioStep[] }): Promise<BotScenario> {
   if (USE_MOCKS) {
     await delay(300);
-    const s: BotScenario = { id: mockBotScenarios.length + 1, ...data, is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+    const s: BotScenario = { id: Date.now(), ...data, is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
     mockBotScenarios.push(s);
     return s;
   }
@@ -191,14 +195,14 @@ export async function updateBotScenario(id: number, data: Partial<BotScenario>):
     await delay(200);
     const idx = mockBotScenarios.findIndex(s => s.id === id);
     if (idx !== -1) Object.assign(mockBotScenarios[idx], data, { updated_at: new Date().toISOString() });
-    return mockBotScenarios[idx];
+    return { ...mockBotScenarios[idx] };
   }
   return request(`/bot-scenarios/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 }
 
 // ==================== Dashboard Stats ====================
 export async function getStats(): Promise<DashboardStats> {
-  if (USE_MOCKS) { await delay(150); return mockStats; }
+  if (USE_MOCKS) { await delay(150); return { ...mockStats }; }
   return request('/stats');
 }
 
