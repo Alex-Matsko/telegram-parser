@@ -8,53 +8,85 @@ import {
   AlertCircle,
   Package,
   Activity,
-  Clock,
   MessageSquareWarning,
   ScrollText,
   RefreshCcw,
+  Loader2,
 } from 'lucide-react';
 
 function StatsBar() {
   const { data: stats } = useQuery({
     queryKey: ['stats'],
     queryFn: getStats,
-    refetchInterval: 30000,
+    refetchInterval: 5000,
   });
 
   if (!stats) return null;
 
-  const formatTime = (iso: string) => {
-    const d = new Date(iso);
-    return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-  };
+  const isParsing = (stats.pending_count ?? 0) > 0;
 
   return (
-    <div className="bg-surface-800 border-b border-border px-4 py-2 flex items-center gap-6 text-xs overflow-x-auto">
-      <div className="flex items-center gap-1.5 text-gray-400">
+    <div className="bg-surface-800 border-b border-border px-4 py-2 flex items-center gap-5 text-xs overflow-x-auto">
+      {/* Products */}
+      <div className="flex items-center gap-1.5 text-gray-400 shrink-0">
         <Package className="w-3.5 h-3.5" />
         <span>Товаров:</span>
         <span className="text-gray-200 font-medium">{stats.total_products}</span>
       </div>
-      <div className="flex items-center gap-1.5 text-gray-400">
+
+      {/* Sources */}
+      <div className="flex items-center gap-1.5 text-gray-400 shrink-0">
         <Radio className="w-3.5 h-3.5" />
         <span>Источников:</span>
         <span className="text-gray-200 font-medium">{stats.active_sources}/{stats.total_sources}</span>
       </div>
-      <div className="flex items-center gap-1.5 text-gray-400">
+
+      {/* Offers */}
+      <div className="flex items-center gap-1.5 text-gray-400 shrink-0">
         <Activity className="w-3.5 h-3.5" />
         <span>Предложений:</span>
         <span className="text-gray-200 font-medium">{stats.total_offers}</span>
       </div>
-      <div className="flex items-center gap-1.5 text-gray-400">
-        <Clock className="w-3.5 h-3.5" />
-        <span>Обновлено:</span>
-        <span className="text-gray-200 font-medium">{formatTime(stats.last_update)}</span>
+
+      <div className="w-px h-4 bg-border shrink-0" />
+
+      {/* Parsing progress ticker */}
+      <div className="flex items-center gap-1.5 shrink-0 font-mono">
+        {isParsing ? (
+          <>
+            <Loader2 className="w-3.5 h-3.5 text-accent animate-spin" />
+            <span className="text-accent">Парсинг:</span>
+            <span className="text-accent font-semibold">{stats.pending_count}</span>
+            <span className="text-gray-500">в очереди</span>
+          </>
+        ) : (
+          <>
+            <span className="h-2 w-2 rounded-full bg-positive inline-block" />
+            <span className="text-gray-500">Очередь пуста</span>
+          </>
+        )}
       </div>
-      {(stats.pending_reviews > 0 || stats.failed_parses > 0) && (
-        <div className="flex items-center gap-1.5 text-warning">
-          <MessageSquareWarning className="w-3.5 h-3.5" />
-          <span>На проверку:</span>
-          <span className="font-medium">{stats.pending_reviews + stats.failed_parses}</span>
+
+      {/* Parsed today */}
+      <div className="flex items-center gap-1.5 text-gray-400 shrink-0 font-mono">
+        <span>Сегодня:</span>
+        <span className="text-gray-200 font-medium">{stats.parsed_today ?? 0}</span>
+      </div>
+
+      {/* Unresolved / failed */}
+      {(stats.unresolved_count > 0 || stats.failed_count > 0) && (
+        <div className="flex items-center gap-1.5 shrink-0">
+          <MessageSquareWarning className="w-3.5 h-3.5 text-yellow-400" />
+          {stats.unresolved_count > 0 && (
+            <span className="text-yellow-400">
+              Проверка: <strong>{stats.unresolved_count}</strong>
+            </span>
+          )}
+          {stats.failed_count > 0 && (
+            <span className="text-red-400 ml-2">
+              Ошибки: <strong>{stats.failed_count}</strong>
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -86,7 +118,6 @@ function ReparseAllButton() {
         const res = await reparseAll();
         setResult({ reset: res.reset });
         setState('done');
-        // invalidate stats so the bar refreshes
         queryClient.invalidateQueries({ queryKey: ['stats'] });
         setTimeout(() => { setState('idle'); setResult(null); }, 4000);
       } catch {
@@ -183,15 +214,13 @@ export default function Layout() {
             ))}
           </nav>
 
-          {/* Spacer */}
           <div className="ml-auto" />
 
-          {/* Reparse All */}
           <ReparseAllButton />
         </div>
       </header>
 
-      {/* Stats Bar */}
+      {/* Stats Bar with parse ticker */}
       <StatsBar />
 
       {/* Main Content */}
