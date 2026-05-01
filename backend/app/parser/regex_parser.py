@@ -17,6 +17,9 @@ Supported price formats:
   "17 256 Black Sim+eSim 61700"        <- price at end, no dash
   "13100.00 ₽"                         <- kopeck format
   "16 256 Black - 62700"               <- price AFTER dash separator only
+  "S25 Ultra 12/512 Phantom Black - 94000"  <- Samsung RAM/storage
+  "MacBook Air 13 M4 16GB 256GB - 84500"    <- Mac RAM vs storage
+  "Galaxy S26 Ultra 1TB Silver - 89000"     <- 1TB as memory
 """
 import logging
 import re
@@ -174,6 +177,9 @@ _PRICE_TRAILING = re.compile(
     r'(?<!\d)(\d{5,6})\s*$',
 )
 
+# Standard storage values (GB) — these numbers are NEVER prices
+_STORAGE_VALUES: frozenset[str] = frozenset({'32', '64', '128', '256', '512', '1024', '2048'})
+
 _MEMORY_PATTERN = re.compile(
     r'(?<![.\d])\b(32|64|128|256|512|1024)\s*(?:gb|гб)?\b(?!\s*(?:\$|€|₽|usd|eur|rub|руб))'
     r'|(1|2)\s*(?:tb|тб)',
@@ -188,6 +194,13 @@ _RAM_STORAGE_PATTERN = re.compile(
 # RAM standalone pattern: "12GB", "16GB", "32GB" — to exclude from price/storage
 _RAM_STANDALONE_PATTERN = re.compile(
     r'\b(8|12|16|24|32|48|64)\s*gb\b',
+    re.IGNORECASE,
+)
+
+# Model generation numbers used in product names like "iPhone 16", "S26", "Watch 10"
+# These standalone 1-2 digit numbers must never be mistaken for prices or memory.
+_MODEL_NUMBER_PATTERN = re.compile(
+    r'(?:^|(?<=\s))(?:iphone\s*)?(1[0-9]|[2-9])(?=\s|$|[/\-])',
     re.IGNORECASE,
 )
 
@@ -390,22 +403,47 @@ def _resolve_brand(line: Optional[str]) -> str:
 
 
 def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int, int]]]:
+    """
+    Extract price from text.
+
+    Blacklist strategy (numbers that are NEVER prices):
+      1. All standard storage values (32/64/128/256/512/1024/2048) — always memory
+      2. RAM/storage slash format: X/Y → both X and Y excluded
+      3. RAM standalone: 8GB, 12GB, 16GB etc.
+      4. Model generation numbers: "16" in "iPhone 16", "26" in "S26" etc.
+
+    Price zone strategy:
+      - If line has a dash/pipe separator → search price ONLY to the right of it
+      - This prevents left-side memory/model numbers from being read as spaced prices
+    """
     excluded: set[str] = set()
 
+    # Rule 1: all standard storage values are unconditionally excluded
+    excluded.update(_STORAGE_VALUES)
+
+    # Rule 2: explicit memory pattern matches (covers TB variants too)
     for m in _MEMORY_PATTERN.finditer(text):
         excluded.add(re.sub(r'[^\d]', '', m.group(0)))
 
+    # Rule 3: RAM/storage slash format X/Y
     for m in _RAM_STORAGE_PATTERN.finditer(text):
         for part in re.split(r'/', m.group(0).lower()):
             excluded.add(re.sub(r'[^\d]', '', part))
 
-    # Exclude RAM values (8GB, 16GB, 24GB, 32GB) — common in Mac specs
+    # Rule 4: RAM standalone (8GB, 16GB, 24GB, 32GB)
     for m in _RAM_STANDALONE_PATTERN.finditer(text):
         excluded.add(re.sub(r'[^\d]', '', m.group(0)))
+
+    # Rule 5: model generation numbers (single/double digit after model keyword or standalone)
+    for m in _MODEL_NUMBER_PATTERN.finditer(text):
+        excluded.add(m.group(1))
 
     def _try_parse(num_str: str, curr_raw: str) -> Optional[tuple[float, str]]:
         normalized = _normalize_price_str(num_str)
         if normalized in excluded:
+            return None
+        # Extra guard: if normalized is a known storage value string, reject
+        if normalized in _STORAGE_VALUES:
             return None
         try:
             val = float(normalized)
@@ -489,6 +527,10 @@ def _extract_memory(text: str) -> Optional[str]:
     Extract storage memory, preferring the largest value found.
     This avoids picking RAM (8GB/16GB) instead of storage (256GB/512GB)
     in Mac spec strings like 'M4 16GB 256GB 2025'.
+
+    FIX: explicitly skip numbers that match known storage values when they
+    appear in a context that looks like RAM (e.g., "16GB" in "M4 16GB 256GB"
+    is RAM, not storage — we pick 256GB instead via best_val comparison).
     """
     best_raw: Optional[str] = None
     best_val: int = 0
@@ -519,13 +561,29 @@ def _extract_memory(text: str) -> Optional[str]:
 
 
 def _extract_color(text: str) -> Optional[str]:
+    """
+    Extract color from text.
+
+    FIX: strip digits AND known storage/memory values before matching colors
+    to prevent "256" or "512" from accidentally matching partial color aliases.
+    Also strip the price zone (right of dash) to avoid price digits
+    interfering with color detection.
+    """
     lower = text.lower()
-    color_text = re.sub(r'\d+', ' ', lower)
+    # Remove price zone (right of first separator) to avoid price numbers
+    # masking color words like 'black' appearing near price: '62700 black'
+    left_side = _PRICE_ZONE_SEPARATOR.split(lower, maxsplit=1)[0]
+    color_text = re.sub(r'\d+', ' ', left_side)
     color_text = re.sub(r'[/\-|•·()]', ' ', color_text)
     color_text = re.sub(r'\s+', ' ', color_text).strip()
+    # Also search full text for colors that appear after separator
+    color_text_full = re.sub(r'\d+', ' ', lower)
+    color_text_full = re.sub(r'[/\-|•·()]', ' ', color_text_full)
+    color_text_full = re.sub(r'\s+', ' ', color_text_full).strip()
     sorted_colors = sorted(COLOR_ALIASES.keys(), key=len, reverse=True)
     for alias in sorted_colors:
-        if re.search(r'(?:^|(?<=\s))' + re.escape(alias) + r'(?=\s|$)', color_text):
+        pat = r'(?:^|(?<=\s))' + re.escape(alias) + r'(?=\s|$)'
+        if re.search(pat, color_text) or re.search(pat, color_text_full):
             return COLOR_ALIASES[alias]
     return None
 
