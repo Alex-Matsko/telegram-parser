@@ -178,7 +178,7 @@ USD:
   "15 Pro Max 256 nat — 915$"
   → {model:"iPhone 15 Pro Max", memory:"256GB", color:"Natural Titanium", price:915, currency:"USD"}
 
-Samsung c RAM/storage:
+Samsung с RAM/storage:
   "S25 Ultra 12/512 Phantom Black — 94000"
   → {line:"Galaxy", model:"Galaxy S25 Ultra", memory:"512GB", color:"Phantom Black", price:94000}
 
@@ -248,6 +248,11 @@ async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> list[
 
     data = response.json()
     content = data["choices"][0]["message"]["content"].strip()
+
+    # Пустой ответ от Ollama — бросаем json.JSONDecodeError чтобы вызвать fallback/retry
+    if not content:
+        raise json.JSONDecodeError("Empty response from LLM", "", 0)
+
     content = _extract_json(content)
     parsed = json.loads(content)
 
@@ -283,43 +288,48 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
 
         async with httpx.AsyncClient(timeout=_LLM_TIMEOUT) as client:
             for model in models:
-                try:
-                    offers = await _call_model(client, model, text)
-                    logger.info(f"LLM ({model}) parsed {len(offers)} offer(s)")
-                    return offers
+                # Повторяем запрос при пустом JSON до 2 раз перед сменой модели
+                for attempt in range(3):
+                    try:
+                        offers = await _call_model(client, model, text)
+                        logger.info(f"LLM ({model}) parsed {len(offers)} offer(s)")
+                        return offers
 
-                except httpx.HTTPStatusError as e:
-                    status = e.response.status_code
-                    if status in _FALLBACK_STATUS_CODES:
-                        logger.warning(f"LLM '{model}' returned {status} — trying next fallback")
+                    except httpx.HTTPStatusError as e:
+                        status = e.response.status_code
+                        if status in _FALLBACK_STATUS_CODES:
+                            logger.warning(f"LLM '{model}' returned {status} — trying next fallback")
+                            last_error = e
+                            break  # сразу к следующей модели
+                        logger.error(
+                            f"LLM non-retriable HTTP {status} with '{model}': "
+                            f"{e.response.text[:300]}"
+                        )
+                        return []
+
+                    except json.JSONDecodeError as e:
+                        if attempt < 2:
+                            logger.warning(f"LLM ({model}) empty/invalid JSON, retry {attempt + 1}/2")
+                            await asyncio.sleep(1.0)
+                            continue
+                        logger.error(f"LLM ({model}) invalid JSON after retries: {e}")
                         last_error = e
-                        continue
-                    logger.error(
-                        f"LLM non-retriable HTTP {status} with '{model}': "
-                        f"{e.response.text[:300]}"
-                    )
-                    return []
+                        break  # пробуем следующую модель
 
-                except json.JSONDecodeError as e:
-                    logger.error(f"LLM ({model}) invalid JSON: {e}")
-                    last_error = e
-                    continue
+                    except ValueError as e:
+                        logger.error(f"LLM ({model}) parse error: {type(e).__name__}: {e}")
+                        last_error = e
+                        break
 
-                except ValueError as e:
-                    # Обрабатываем ошибки вроде 'substring not found' при извлечении JSON
-                    logger.error(f"LLM ({model}) parse error: {type(e).__name__}: {e}")
-                    last_error = e
-                    continue
+                    except httpx.ReadTimeout as e:
+                        logger.error(f"LLM ({model}) read timeout — trying next model")
+                        last_error = e
+                        break
 
-                except httpx.ReadTimeout as e:
-                    logger.error(f"LLM ({model}) read timeout — trying next model")
-                    last_error = e
-                    continue
-
-                except Exception as e:
-                    logger.error(f"LLM ({model}) unexpected error: {type(e).__name__}: {e!r}")
-                    last_error = e
-                    continue
+                    except Exception as e:
+                        logger.error(f"LLM ({model}) unexpected error: {type(e).__name__}: {e!r}")
+                        last_error = e
+                        break
 
     logger.error(f"All {len(models)} LLM model(s) exhausted. Last error: {last_error}")
     return []
