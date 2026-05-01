@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.bot_scenarios import router as bot_scenarios_router
+from app.api.export import router as export_router
 from app.api.history import router as history_router
 from app.api.logs import router as logs_router
 from app.api.price_list import router as price_list_router
@@ -15,6 +16,9 @@ from app.services.price_service import get_dashboard_stats
 
 api_router = APIRouter(prefix="/api")
 
+# IMPORTANT: export router must be registered BEFORE price_list_router
+# so that /price-list/export is matched before /price-list/{product_id}
+api_router.include_router(export_router)
 api_router.include_router(price_list_router)
 api_router.include_router(history_router)
 api_router.include_router(sources_router)
