@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { getStats } from '../api/client';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getStats, reparseAll } from '../api/client';
 import {
   BarChart3,
   Radio,
@@ -10,6 +11,7 @@ import {
   Clock,
   MessageSquareWarning,
   ScrollText,
+  RefreshCcw,
 } from 'lucide-react';
 
 function StatsBar() {
@@ -66,6 +68,81 @@ const navItems = [
   { to: '/logs', label: 'Логи', icon: ScrollText },
 ];
 
+type ReparseState = 'idle' | 'confirm' | 'loading' | 'done';
+
+function ReparseAllButton() {
+  const [state, setState] = useState<ReparseState>('idle');
+  const [result, setResult] = useState<{ reset: number } | null>(null);
+  const queryClient = useQueryClient();
+
+  const handleClick = async () => {
+    if (state === 'idle') {
+      setState('confirm');
+      return;
+    }
+    if (state === 'confirm') {
+      setState('loading');
+      try {
+        const res = await reparseAll();
+        setResult({ reset: res.reset });
+        setState('done');
+        // invalidate stats so the bar refreshes
+        queryClient.invalidateQueries({ queryKey: ['stats'] });
+        setTimeout(() => { setState('idle'); setResult(null); }, 4000);
+      } catch {
+        setState('idle');
+      }
+      return;
+    }
+  };
+
+  const handleCancel = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setState('idle');
+  };
+
+  if (state === 'done') {
+    return (
+      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs text-positive bg-positive/10">
+        <RefreshCcw className="w-3.5 h-3.5" />
+        <span>Запущено ({result?.reset} сообщ.)</span>
+      </div>
+    );
+  }
+
+  if (state === 'confirm') {
+    return (
+      <div className="flex items-center gap-1 text-xs">
+        <span className="text-warning px-2">Перепарсить ВСЁ?</span>
+        <button
+          onClick={handleClick}
+          className="px-2 py-1 rounded bg-warning/20 text-warning hover:bg-warning/30 transition-colors"
+        >
+          Да
+        </button>
+        <button
+          onClick={handleCancel}
+          className="px-2 py-1 rounded bg-surface-700 text-gray-400 hover:text-gray-200 transition-colors"
+        >
+          Отмена
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={state === 'loading'}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-gray-400 hover:text-orange-400 hover:bg-orange-500/10 transition-colors disabled:opacity-50"
+      title="Перепарсить все собранные сообщения"
+    >
+      <RefreshCcw className={`w-4 h-4 ${state === 'loading' ? 'animate-spin' : ''}`} />
+      {state === 'loading' ? 'Запуск...' : 'Перепарсить всё'}
+    </button>
+  );
+}
+
 export default function Layout() {
   return (
     <div className="min-h-screen flex flex-col bg-surface-900">
@@ -105,6 +182,12 @@ export default function Layout() {
               </NavLink>
             ))}
           </nav>
+
+          {/* Spacer */}
+          <div className="ml-auto" />
+
+          {/* Reparse All */}
+          <ReparseAllButton />
         </div>
       </header>
 

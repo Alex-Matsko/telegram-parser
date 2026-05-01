@@ -176,6 +176,12 @@ export async function retryAllFailed(): Promise<{ queued: number }> {
   return request('/unresolved/retry-all', { method: 'POST' });
 }
 
+// ==================== Reparse All ====================
+export async function reparseAll(): Promise<{ reset: number; status: string }> {
+  if (USE_MOCKS) { await delay(600); return { reset: 999, status: 'queued' }; }
+  return request('/reparse-all', { method: 'POST' });
+}
+
 // ==================== Bot Scenarios ====================
 export async function getBotScenarios(): Promise<BotScenario[]> {
   if (USE_MOCKS) { await delay(200); return [...mockBotScenarios]; }

@@ -82,3 +82,32 @@ async def get_filters(
         "suppliers": [{"id": s.id, "name": s.source_name} for s in sources],
         "currencies": ["RUB", "USD", "EUR"],
     }
+
+
+@api_router.post("/reparse-all", tags=["Dashboard"])
+async def reparse_all_messages(
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """
+    Reset ALL raw messages to 'pending' and enqueue the parse task.
+    This forces a full re-parse of every collected message.
+    """
+    import logging
+    from sqlalchemy import update
+    from app.models.raw_message import RawMessage
+    from app.tasks.parse import parse_pending_messages
+
+    logger = logging.getLogger(__name__)
+
+    result = await session.execute(
+        update(RawMessage)
+        .values(parse_status="pending", is_processed=False, parse_error=None)
+    )
+    await session.commit()
+
+    reset_count = result.rowcount
+    logger.info(f"reparse-all: reset {reset_count} messages to pending")
+
+    parse_pending_messages.delay()
+
+    return {"reset": reset_count, "status": "queued"}
