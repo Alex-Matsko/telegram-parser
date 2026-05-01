@@ -2,15 +2,17 @@ import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { Source, SourceCreate, BotScenario } from '../../types';
 import { getBotScenarios } from '../../api/client';
-import { X } from 'lucide-react';
+import { X, AlertCircle } from 'lucide-react';
 
 interface Props {
   source?: Source | null;
   onSubmit: (data: SourceCreate) => void;
   onClose: () => void;
+  isLoading?: boolean;
+  error?: string | null;
 }
 
-export default function SourceForm({ source, onSubmit, onClose }: Props) {
+export default function SourceForm({ source, onSubmit, onClose, isLoading = false, error = null }: Props) {
   const [formData, setFormData] = useState<SourceCreate>({
     type: 'channel',
     telegram_id: 0,
@@ -23,7 +25,6 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
     bot_scenario_id: null,
   });
 
-  // separate string state for telegram_id input to avoid 0-as-empty bug
   const [telegramIdStr, setTelegramIdStr] = useState('');
 
   const { data: scenarios } = useQuery<BotScenario[]>({
@@ -50,35 +51,39 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
 
   const handleTelegramIdChange = (val: string) => {
     setTelegramIdStr(val);
-    const num = Number(val);
+    const trimmed = val.trim();
+    // allow negative IDs for channels/groups
+    const num = trimmed === '' ? 0 : Number(trimmed);
     setFormData(d => ({ ...d, telegram_id: isNaN(num) ? 0 : num }));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!telegramIdStr || formData.telegram_id === 0) return;
-    onSubmit(formData);
+    const tid = Number(telegramIdStr.trim());
+    if (!telegramIdStr.trim() || isNaN(tid) || tid === 0) return;
+    onSubmit({ ...formData, telegram_id: tid });
   };
 
   const telegramIdPlaceholder =
     formData.type === 'user'
       ? 'Числовой User ID, например 5701246948'
       : formData.type === 'bot'
-      ? 'Telegram ID бота (только цифры)'
-      : 'Например -1001234567890';
+      ? 'ID бота (только цифры, положительное число)'
+      : 'Например -1001234567890 (со знаком минус)';
 
   const telegramIdHint =
-    formData.type === 'user'
-      ? 'Узнать User ID можно через @userinfobot. Только цифры, без минуса.'
-      : formData.type === 'bot'
-      ? 'ID бота (положительное число). Узнать через @userinfobot или BotFather.'
+    formData.type === 'bot'
+      ? 'ID бота: положительное число. Узнать через @userinfobot.'
+      : formData.type === 'channel'
+      ? 'Для каналов ID начинается с -100. Узнать через @userinfobot.'
       : null;
 
   const isBot = formData.type === 'bot';
   const showLineFormat = formData.parsing_strategy === 'pipe' || formData.parsing_strategy === 'table';
   const activeScenarios = scenarios?.filter(s => s.is_active) ?? [];
 
-  const isTelegramIdValid = telegramIdStr.trim() !== '' && formData.telegram_id !== 0;
+  const tid = Number(telegramIdStr.trim());
+  const isTelegramIdValid = telegramIdStr.trim() !== '' && !isNaN(tid) && tid !== 0;
   const isFormValid = formData.source_name.trim() !== '' && isTelegramIdValid;
 
   return (
@@ -88,19 +93,30 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
           <h3 className="text-sm font-semibold text-gray-200">
             {source ? 'Редактировать источник' : 'Добавить источник'}
           </h3>
-          <button onClick={onClose} className="p-1 rounded text-gray-500 hover:text-gray-300 transition-colors">
+          <button type="button" onClick={onClose} className="p-1 rounded text-gray-500 hover:text-gray-300 transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
+
         <form onSubmit={handleSubmit} className="p-4 space-y-3">
+
+          {/* Global error banner */}
+          {error && (
+            <div className="flex items-start gap-2 rounded-md bg-red-500/10 border border-red-500/30 px-3 py-2">
+              <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+              <p className="text-xs text-red-400">{error}</p>
+            </div>
+          )}
+
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Название</label>
+            <label className="block text-xs text-gray-400 mb-1">Название *</label>
             <input
               type="text"
               value={formData.source_name}
               onChange={e => setFormData(d => ({ ...d, source_name: e.target.value }))}
               className="input-field w-full"
               placeholder="Название источника"
+              disabled={isLoading}
             />
           </div>
 
@@ -117,6 +133,7 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
                 }));
               }}
               className="select-field w-full"
+              disabled={isLoading}
             >
               <option value="channel">Канал</option>
               <option value="group">Группа / Чат</option>
@@ -126,7 +143,7 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Telegram ID</label>
+            <label className="block text-xs text-gray-400 mb-1">Telegram ID *</label>
             <input
               type="text"
               inputMode="numeric"
@@ -136,16 +153,16 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
                 telegramIdStr && !isTelegramIdValid ? 'border-red-500/60' : ''
               }`}
               placeholder={telegramIdPlaceholder}
+              disabled={isLoading}
             />
             {telegramIdHint && (
               <p className="text-[10px] text-gray-500 mt-1">{telegramIdHint}</p>
             )}
             {telegramIdStr && !isTelegramIdValid && (
-              <p className="text-[10px] text-red-400 mt-1">Введите корректный Telegram ID (не 0)</p>
+              <p className="text-[10px] text-red-400 mt-1">Введите корректный Telegram ID (не 0, только цифры)</p>
             )}
           </div>
 
-          {/* Bot scenario selector */}
           {isBot && (
             <div>
               <label className="block text-xs text-gray-400 mb-1">Сценарий бота</label>
@@ -158,6 +175,7 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
                   }))
                 }
                 className="select-field w-full"
+                disabled={isLoading}
               >
                 <option value="">— Без сценария (отправить «Прайс») —</option>
                 {activeScenarios.map(s => (
@@ -183,6 +201,7 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
               className="input-field w-full"
               min={5}
               max={1440}
+              disabled={isLoading}
             />
           </div>
 
@@ -196,6 +215,7 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
                 line_format: null,
               }))}
               className="select-field w-full"
+              disabled={isLoading}
             >
               <option value="auto">Авто (regex → LLM)</option>
               <option value="regex">Только Regex</option>
@@ -205,7 +225,6 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
             </select>
           </div>
 
-          {/* Line format hint — visible for pipe/table */}
           {showLineFormat && (
             <div>
               <label className="block text-xs text-gray-400 mb-1">
@@ -222,6 +241,7 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
                     ? '{model} | {memory} | {color} | {price}'
                     : '{model}  {memory}  {price}'
                 }
+                disabled={isLoading}
               />
               <p className="text-[10px] text-gray-500 mt-1">
                 Токены: {'{model}'} {'{memory}'} {'{color}'} {'{price}'}. Оставьте пустым для автодетекта.
@@ -236,19 +256,21 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
               onChange={e => setFormData(d => ({ ...d, is_active: e.target.checked }))}
               className="rounded border-border bg-surface-700 text-accent focus:ring-accent"
               id="isActive"
+              disabled={isLoading}
             />
             <label htmlFor="isActive" className="text-xs text-gray-300">Активен</label>
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="btn-secondary text-xs">
+            <button type="button" onClick={onClose} className="btn-secondary text-xs" disabled={isLoading}>
               Отмена
             </button>
             <button
               type="submit"
-              disabled={!isFormValid}
-              className="btn-primary text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!isFormValid || isLoading}
+              className="btn-primary text-xs disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
             >
+              {isLoading && <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />}
               {source ? 'Сохранить' : 'Добавить'}
             </button>
           </div>
