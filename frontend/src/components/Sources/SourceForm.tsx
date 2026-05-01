@@ -19,8 +19,12 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
     is_active: true,
     poll_interval_minutes: 30,
     parsing_strategy: 'auto',
+    line_format: null,
     bot_scenario_id: null,
   });
+
+  // separate string state for telegram_id input to avoid 0-as-empty bug
+  const [telegramIdStr, setTelegramIdStr] = useState('');
 
   const { data: scenarios } = useQuery<BotScenario[]>({
     queryKey: ['botScenarios'],
@@ -37,13 +41,22 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
         is_active: source.is_active,
         poll_interval_minutes: source.poll_interval_minutes,
         parsing_strategy: source.parsing_strategy,
+        line_format: source.line_format ?? null,
         bot_scenario_id: source.bot_scenario_id,
       });
+      setTelegramIdStr(String(source.telegram_id));
     }
   }, [source]);
 
+  const handleTelegramIdChange = (val: string) => {
+    setTelegramIdStr(val);
+    const num = Number(val);
+    setFormData(d => ({ ...d, telegram_id: isNaN(num) ? 0 : num }));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!telegramIdStr || formData.telegram_id === 0) return;
     onSubmit(formData);
   };
 
@@ -51,20 +64,26 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
     formData.type === 'user'
       ? 'Числовой User ID, например 5701246948'
       : formData.type === 'bot'
-      ? 'Telegram ID бота'
+      ? 'Telegram ID бота (только цифры)'
       : 'Например -1001234567890';
 
   const telegramIdHint =
     formData.type === 'user'
-      ? 'Узнать User ID можно через @userinfobot или сервисы типа TELEGRAM ID CHECK. Только цифры, без минуса.'
+      ? 'Узнать User ID можно через @userinfobot. Только цифры, без минуса.'
+      : formData.type === 'bot'
+      ? 'ID бота (положительное число). Узнать через @userinfobot или BotFather.'
       : null;
 
   const isBot = formData.type === 'bot';
+  const showLineFormat = formData.parsing_strategy === 'pipe' || formData.parsing_strategy === 'table';
   const activeScenarios = scenarios?.filter(s => s.is_active) ?? [];
+
+  const isTelegramIdValid = telegramIdStr.trim() !== '' && formData.telegram_id !== 0;
+  const isFormValid = formData.source_name.trim() !== '' && isTelegramIdValid;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="card w-full max-w-md mx-4">
+      <div className="card w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <h3 className="text-sm font-semibold text-gray-200">
             {source ? 'Редактировать источник' : 'Добавить источник'}
@@ -82,7 +101,6 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
               onChange={e => setFormData(d => ({ ...d, source_name: e.target.value }))}
               className="input-field w-full"
               placeholder="Название источника"
-              required
             />
           </div>
 
@@ -95,7 +113,6 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
                 setFormData(d => ({
                   ...d,
                   type: newType,
-                  // reset scenario if switching away from bot
                   bot_scenario_id: newType === 'bot' ? d.bot_scenario_id : null,
                 }));
               }}
@@ -111,19 +128,24 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
           <div>
             <label className="block text-xs text-gray-400 mb-1">Telegram ID</label>
             <input
-              type="number"
-              value={formData.telegram_id || ''}
-              onChange={e => setFormData(d => ({ ...d, telegram_id: Number(e.target.value) }))}
-              className="input-field w-full"
+              type="text"
+              inputMode="numeric"
+              value={telegramIdStr}
+              onChange={e => handleTelegramIdChange(e.target.value)}
+              className={`input-field w-full ${
+                telegramIdStr && !isTelegramIdValid ? 'border-red-500/60' : ''
+              }`}
               placeholder={telegramIdPlaceholder}
-              required
             />
             {telegramIdHint && (
               <p className="text-[10px] text-gray-500 mt-1">{telegramIdHint}</p>
             )}
+            {telegramIdStr && !isTelegramIdValid && (
+              <p className="text-[10px] text-red-400 mt-1">Введите корректный Telegram ID (не 0)</p>
+            )}
           </div>
 
-          {/* Bot scenario selector — visible only when type=bot */}
+          {/* Bot scenario selector */}
           {isBot && (
             <div>
               <label className="block text-xs text-gray-400 mb-1">Сценарий бота</label>
@@ -168,14 +190,44 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
             <label className="block text-xs text-gray-400 mb-1">Стратегия парсинга</label>
             <select
               value={formData.parsing_strategy}
-              onChange={e => setFormData(d => ({ ...d, parsing_strategy: e.target.value as SourceCreate['parsing_strategy'] }))}
+              onChange={e => setFormData(d => ({
+                ...d,
+                parsing_strategy: e.target.value as SourceCreate['parsing_strategy'],
+                line_format: null,
+              }))}
               className="select-field w-full"
             >
-              <option value="auto">Авто</option>
-              <option value="regex">Regex</option>
-              <option value="llm">LLM</option>
+              <option value="auto">Авто (regex → LLM)</option>
+              <option value="regex">Только Regex</option>
+              <option value="llm">Только LLM</option>
+              <option value="pipe">Pipe-формат (A | B | цена)</option>
+              <option value="table">Табличный (пробелы/табы)</option>
             </select>
           </div>
+
+          {/* Line format hint — visible for pipe/table */}
+          {showLineFormat && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">
+                Шаблон строки
+                <span className="ml-1 text-gray-600 font-normal">(необязательно)</span>
+              </label>
+              <input
+                type="text"
+                value={formData.line_format ?? ''}
+                onChange={e => setFormData(d => ({ ...d, line_format: e.target.value || null }))}
+                className="input-field w-full font-mono text-xs"
+                placeholder={
+                  formData.parsing_strategy === 'pipe'
+                    ? '{model} | {memory} | {color} | {price}'
+                    : '{model}  {memory}  {price}'
+                }
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Токены: {'{model}'} {'{memory}'} {'{color}'} {'{price}'}. Оставьте пустым для автодетекта.
+              </p>
+            </div>
+          )}
 
           <div className="flex items-center gap-2">
             <input
@@ -192,7 +244,11 @@ export default function SourceForm({ source, onSubmit, onClose }: Props) {
             <button type="button" onClick={onClose} className="btn-secondary text-xs">
               Отмена
             </button>
-            <button type="submit" className="btn-primary text-xs">
+            <button
+              type="submit"
+              disabled={!isFormValid}
+              className="btn-primary text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+            >
               {source ? 'Сохранить' : 'Добавить'}
             </button>
           </div>
