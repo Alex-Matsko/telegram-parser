@@ -46,6 +46,10 @@ services:
       LLM_API_URL: ${LLM_API_URL:-https://api.openai.com/v1}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_FALLBACK_MODELS: ${LLM_FALLBACK_MODELS:-}
+      LLM_RATE_LIMIT_DELAY: ${LLM_RATE_LIMIT_DELAY:-2.0}
+      LLM_CONCURRENCY: ${LLM_CONCURRENCY:-1}
+      LLM_MAX_PER_BATCH: ${LLM_MAX_PER_BATCH:-20}
       SECRET_KEY: ${SECRET_KEY:-changeme-in-production}
     ports:
       - "8000:8000"
@@ -77,6 +81,10 @@ services:
       LLM_API_URL: ${LLM_API_URL:-https://api.openai.com/v1}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      LLM_FALLBACK_MODELS: ${LLM_FALLBACK_MODELS:-}
+      LLM_RATE_LIMIT_DELAY: ${LLM_RATE_LIMIT_DELAY:-2.0}
+      LLM_CONCURRENCY: ${LLM_CONCURRENCY:-1}
+      LLM_MAX_PER_BATCH: ${LLM_MAX_PER_BATCH:-20}
     extra_hosts:
       - "host-gateway:host-gateway"
     depends_on:
