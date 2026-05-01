@@ -246,7 +246,7 @@ def _extract_json(content: str) -> str:
 
 def _dict_to_parsed_offer(data: dict) -> Optional[ParsedOffer]:
     try:
-<br>        price = data.get("price")
+        price = data.get("price")
         if price is not None:
             price = float(price)
         confidence = float(data.get("confidence", 0.6))
