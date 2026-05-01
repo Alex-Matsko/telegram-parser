@@ -59,6 +59,23 @@ export default function LogViewer() {
     return () => clearInterval(id);
   }, [autoRefresh, fetchLogs]);
 
+  // Preserve scroll position on re-render: save before update, restore after
+  const scrollTopRef = useRef(0);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    // If user is not at top — restore scroll position after DOM update
+    if (scrollTopRef.current > 0) {
+      el.scrollTop = scrollTopRef.current;
+    }
+  }, [records]);
+
+  const handleScroll = useCallback(() => {
+    if (containerRef.current) {
+      scrollTopRef.current = containerRef.current.scrollTop;
+    }
+  }, []);
+
   const handleClear = async () => {
     if (!confirm('Очистить буфер логов?')) return;
     setClearing(true);
@@ -66,12 +83,14 @@ export default function LogViewer() {
       await clearLogs();
       setRecords([]);
       setTotal(0);
+      scrollTopRef.current = 0;
     } finally {
       setClearing(false);
     }
   };
 
   const scrollToTop = () => {
+    scrollTopRef.current = 0;
     topRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
@@ -101,7 +120,6 @@ export default function LogViewer() {
         )}
         <span className="text-xs text-gray-500 ml-auto">всего: {total}</span>
 
-        {/* Level selector */}
         <div className="flex items-center gap-1.5">
           <Filter className="w-3.5 h-3.5 text-gray-400" />
           <div className="relative">
@@ -116,7 +134,6 @@ export default function LogViewer() {
           </div>
         </div>
 
-        {/* Logger filter */}
         <input
           type="text"
           placeholder="Фильтр по логгеру (app.collector)"
@@ -125,7 +142,6 @@ export default function LogViewer() {
           className="bg-surface-700 border border-border text-gray-200 text-xs rounded px-2 py-1 w-48 focus:outline-none focus:ring-1 focus:ring-accent placeholder-gray-500"
         />
 
-        {/* Limit */}
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-gray-400">кол-во:</span>
           <div className="relative">
@@ -140,7 +156,6 @@ export default function LogViewer() {
           </div>
         </div>
 
-        {/* Auto-refresh toggle */}
         <button
           onClick={() => setAutoRefresh(v => !v)}
           title={autoRefresh ? 'Пауза обновления' : 'Возобновить обновление'}
@@ -181,24 +196,29 @@ export default function LogViewer() {
         </button>
       </div>
 
-      {/* Error banner */}
       {error && (
         <div className="px-4 py-2 bg-red-900/40 border-b border-red-800 text-red-300 text-xs">
           {error}
         </div>
       )}
 
-      {/* Log list — newest FIRST (top) */}
+      {/* Log list — newest FIRST (top), overflow-anchor:none prevents browser auto-scroll */}
       <div
         ref={containerRef}
+        onScroll={handleScroll}
         className="flex-1 overflow-y-auto font-mono text-xs leading-5 px-4 py-2 space-y-0.5"
+        style={{ overflowAnchor: 'none' }}
       >
         <div ref={topRef} />
         {records.length === 0 && !loading && (
           <div className="text-gray-500 py-8 text-center">Логов нет</div>
         )}
         {records.map((r, i) => (
-          <div key={i} className={`flex gap-2 ${LEVEL_STYLES[r.level] ?? 'text-gray-300'} hover:bg-surface-800/60 rounded px-1`}>
+          <div
+            key={i}
+            className={`flex gap-2 ${LEVEL_STYLES[r.level] ?? 'text-gray-300'} hover:bg-surface-800/60 rounded px-1`}
+            style={{ overflowAnchor: 'none' }}
+          >
             <span className="shrink-0 text-gray-500 w-[68px]">{formatTime(r.ts)}</span>
             <span className={`shrink-0 px-1.5 rounded text-[10px] self-start mt-0.5 ${LEVEL_BADGE[r.level] ?? ''}`}>
               {r.level}
@@ -211,7 +231,6 @@ export default function LogViewer() {
         ))}
       </div>
 
-      {/* Status bar */}
       <div className="px-4 py-1.5 bg-surface-800 border-t border-border flex items-center gap-4 text-[10px] text-gray-500">
         <span>Показано: {records.length}</span>
         <span>Авто-обновление: {autoRefresh ? `каждые ${POLL_INTERVAL_MS / 1000}с` : 'выключено'}</span>
