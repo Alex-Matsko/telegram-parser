@@ -41,7 +41,7 @@ celery_app.conf.update(
         },
         "parse-pending-messages": {
             "task": "app.tasks.parse.parse_pending_messages",
-            "schedule": 300,
+            "schedule": 60,  # каждую минуту вместо 5
         },
         "refresh-price-list": {
             "task": "app.tasks.aggregate.refresh_price_list",

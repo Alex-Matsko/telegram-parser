@@ -8,7 +8,7 @@ from app.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 # Максимальный размер батча для LLM — чем меньше, тем меньше шанс SoftTimeLimitExceeded
-PARSE_BATCH_SIZE = 8
+PARSE_BATCH_SIZE = 50
 
 
 def _run_async(coro):
@@ -31,7 +31,7 @@ def _run_async(coro):
 def parse_pending_messages(self):
     """
     Periodic task: parse all unprocessed raw messages.
-    Runs every 5 minutes via Celery Beat.
+    Runs every minute via Celery Beat.
     """
     try:
         result = _run_async(_parse_pending_messages_async())
