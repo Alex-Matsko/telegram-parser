@@ -7,7 +7,8 @@ export interface Source {
   supplier_id: number | null;
   is_active: boolean;
   poll_interval_minutes: number;
-  parsing_strategy: 'auto' | 'regex' | 'llm';
+  parsing_strategy: 'auto' | 'regex' | 'llm' | 'pipe' | 'table';
+  line_format: string | null;
   bot_scenario_id: number | null;
   last_read_at: string | null;
   last_message_id: number | null;
@@ -24,7 +25,8 @@ export interface SourceCreate {
   supplier_id?: number | null;
   is_active?: boolean;
   poll_interval_minutes?: number;
-  parsing_strategy?: 'auto' | 'regex' | 'llm';
+  parsing_strategy?: 'auto' | 'regex' | 'llm' | 'pipe' | 'table';
+  line_format?: string | null;
   bot_scenario_id?: number | null;
 }
 
@@ -165,7 +167,6 @@ export interface OfferDetail {
   confidence: number;
   is_current: boolean;
   updated_at: string;
-  // Source traceability
   raw_line: string | null;
   source_name: string | null;
   channel_url: string | null;
@@ -218,8 +219,8 @@ export interface PriceChangeEvent {
 // ==================== Unresolved Message Types ====================
 export interface UnresolvedMessage {
   id: number;
-  source_id: number;
-  source_name: string;
+  source_id: number | null;
+  source_name: string | null;
   telegram_message_id: number;
   message_text: string;
   message_date: string;
@@ -243,6 +244,7 @@ export interface UnresolvedResponse {
   total: number;
   page: number;
   per_page: number;
+  pages: number;
 }
 
 // ==================== Bot Scenario Types ====================

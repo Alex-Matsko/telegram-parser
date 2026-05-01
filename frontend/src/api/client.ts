@@ -93,9 +93,11 @@ export async function createSource(data: SourceCreate): Promise<Source> {
     await delay(300);
     const newSource: Source = {
       id: mockSources.length + 1, ...data,
-      supplier_id: data.supplier_id ?? null, is_active: data.is_active ?? true,
+      supplier_id: data.supplier_id ?? null,
+      is_active: data.is_active ?? true,
       poll_interval_minutes: data.poll_interval_minutes ?? 30,
       parsing_strategy: data.parsing_strategy ?? 'auto',
+      line_format: data.line_format ?? null,
       bot_scenario_id: data.bot_scenario_id ?? null,
       last_read_at: null, last_message_id: null, error_count: 0, last_error: null,
       created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
@@ -141,23 +143,33 @@ export async function getSuppliers(): Promise<Supplier[]> {
 }
 
 // ==================== Unresolved ====================
-export async function getUnresolved(filters: { status?: string; page?: number; per_page?: number } = {}): Promise<UnresolvedResponse> {
+export async function getUnresolved(
+  filters: { status?: string; page?: number; per_page?: number } = {}
+): Promise<UnresolvedResponse> {
   if (USE_MOCKS) { await delay(300); return mockGetUnresolved(filters); }
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([k, v]) => { if (v !== undefined) params.set(k, String(v)); });
   return request(`/unresolved?${params.toString()}`);
 }
+
 export async function resolveMessage(id: number, data: ResolveRequest): Promise<void> {
   if (USE_MOCKS) { await delay(300); return; }
   return request(`/unresolved/${id}/resolve`, { method: 'POST', body: JSON.stringify(data) });
 }
+
 export async function bulkReparse(ids: number[]): Promise<void> {
   if (USE_MOCKS) { await delay(500); return; }
   return request('/unresolved/bulk-reparse', { method: 'POST', body: JSON.stringify({ ids }) });
 }
+
 export async function bulkMarkResolved(ids: number[]): Promise<void> {
   if (USE_MOCKS) { await delay(300); return; }
   return request('/unresolved/bulk-resolve', { method: 'POST', body: JSON.stringify({ ids }) });
+}
+
+export async function retryAllFailed(): Promise<{ queued: number }> {
+  if (USE_MOCKS) { await delay(500); return { queued: 0 }; }
+  return request('/unresolved/retry-all', { method: 'POST' });
 }
 
 // ==================== Bot Scenarios ====================
