@@ -271,9 +271,15 @@ export interface DashboardStats {
   active_sources: number;
   total_suppliers: number;
   total_offers: number;
+  // Legacy fields (kept for backward compatibility)
   pending_reviews: number;
   failed_parses: number;
   last_update: string;
+  // Parse progress ticker fields (optional — backend may not return them yet)
+  pending_count?: number;
+  parsed_today?: number;
+  unresolved_count?: number;
+  failed_count?: number;
 }
 
 // ==================== Filter Options ====================
