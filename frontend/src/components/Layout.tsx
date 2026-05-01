@@ -23,7 +23,11 @@ function StatsBar() {
 
   if (!stats) return null;
 
-  const isParsing = (stats.pending_count ?? 0) > 0;
+  const pendingCount    = stats.pending_count    ?? 0;
+  const parsedToday     = stats.parsed_today     ?? 0;
+  const unresolvedCount = stats.unresolved_count ?? stats.pending_reviews ?? 0;
+  const failedCount     = stats.failed_count     ?? stats.failed_parses   ?? 0;
+  const isParsing = pendingCount > 0;
 
   return (
     <div className="bg-surface-800 border-b border-border px-4 py-2 flex items-center gap-5 text-xs overflow-x-auto">
@@ -56,7 +60,7 @@ function StatsBar() {
           <>
             <Loader2 className="w-3.5 h-3.5 text-accent animate-spin" />
             <span className="text-accent">Парсинг:</span>
-            <span className="text-accent font-semibold">{stats.pending_count}</span>
+            <span className="text-accent font-semibold">{pendingCount}</span>
             <span className="text-gray-500">в очереди</span>
           </>
         ) : (
@@ -70,21 +74,21 @@ function StatsBar() {
       {/* Parsed today */}
       <div className="flex items-center gap-1.5 text-gray-400 shrink-0 font-mono">
         <span>Сегодня:</span>
-        <span className="text-gray-200 font-medium">{stats.parsed_today ?? 0}</span>
+        <span className="text-gray-200 font-medium">{parsedToday}</span>
       </div>
 
       {/* Unresolved / failed */}
-      {(stats.unresolved_count > 0 || stats.failed_count > 0) && (
+      {(unresolvedCount > 0 || failedCount > 0) && (
         <div className="flex items-center gap-1.5 shrink-0">
           <MessageSquareWarning className="w-3.5 h-3.5 text-yellow-400" />
-          {stats.unresolved_count > 0 && (
+          {unresolvedCount > 0 && (
             <span className="text-yellow-400">
-              Проверка: <strong>{stats.unresolved_count}</strong>
+              Проверка: <strong>{unresolvedCount}</strong>
             </span>
           )}
-          {stats.failed_count > 0 && (
+          {failedCount > 0 && (
             <span className="text-red-400 ml-2">
-              Ошибки: <strong>{stats.failed_count}</strong>
+              Ошибки: <strong>{failedCount}</strong>
             </span>
           )}
         </div>
@@ -108,10 +112,7 @@ function ReparseAllButton() {
   const queryClient = useQueryClient();
 
   const handleClick = async () => {
-    if (state === 'idle') {
-      setState('confirm');
-      return;
-    }
+    if (state === 'idle') { setState('confirm'); return; }
     if (state === 'confirm') {
       setState('loading');
       try {
@@ -123,14 +124,10 @@ function ReparseAllButton() {
       } catch {
         setState('idle');
       }
-      return;
     }
   };
 
-  const handleCancel = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setState('idle');
-  };
+  const handleCancel = (e: React.MouseEvent) => { e.stopPropagation(); setState('idle'); };
 
   if (state === 'done') {
     return (
@@ -145,18 +142,8 @@ function ReparseAllButton() {
     return (
       <div className="flex items-center gap-1 text-xs">
         <span className="text-warning px-2">Перепарсить ВСЁ?</span>
-        <button
-          onClick={handleClick}
-          className="px-2 py-1 rounded bg-warning/20 text-warning hover:bg-warning/30 transition-colors"
-        >
-          Да
-        </button>
-        <button
-          onClick={handleCancel}
-          className="px-2 py-1 rounded bg-surface-700 text-gray-400 hover:text-gray-200 transition-colors"
-        >
-          Отмена
-        </button>
+        <button onClick={handleClick} className="px-2 py-1 rounded bg-warning/20 text-warning hover:bg-warning/30 transition-colors">Да</button>
+        <button onClick={handleCancel} className="px-2 py-1 rounded bg-surface-700 text-gray-400 hover:text-gray-200 transition-colors">Отмена</button>
       </div>
     );
   }
@@ -177,10 +164,8 @@ function ReparseAllButton() {
 export default function Layout() {
   return (
     <div className="min-h-screen flex flex-col bg-surface-900">
-      {/* Top Nav */}
       <header className="bg-surface-800 border-b border-border">
         <div className="px-4 flex items-center h-12 gap-6">
-          {/* Logo */}
           <NavLink to="/" className="flex items-center gap-2 shrink-0">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-label="TG Price Monitor Logo">
               <rect x="2" y="2" width="20" height="20" rx="4" stroke="currentColor" strokeWidth="1.5" className="text-accent" />
@@ -193,7 +178,6 @@ export default function Layout() {
             <span className="text-sm font-semibold text-gray-100 tracking-tight">TG Price Monitor</span>
           </NavLink>
 
-          {/* Nav Links */}
           <nav className="flex items-center gap-1">
             {navItems.map(({ to, label, icon: Icon }) => (
               <NavLink
@@ -215,15 +199,12 @@ export default function Layout() {
           </nav>
 
           <div className="ml-auto" />
-
           <ReparseAllButton />
         </div>
       </header>
 
-      {/* Stats Bar with parse ticker */}
       <StatsBar />
 
-      {/* Main Content */}
       <main className="flex-1 overflow-hidden">
         <Outlet />
       </main>
