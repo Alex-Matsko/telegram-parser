@@ -163,12 +163,9 @@ def _build_tg_link(source: Optional[Source], raw_msg: Optional[RawMessage]) -> O
     tg_id = source.telegram_id
     if not tg_id:
         return None
-    # Telegram supergroup/channel IDs come as negative: -1001234567890
-    # t.me/c/ expects the numeric part without the -100 prefix
     if tg_id < 0:
         tg_id = abs(tg_id) - 1_000_000_000_000
         if tg_id <= 0:
-            # fallback: just strip leading -100 digits
             tg_id = int(str(abs(source.telegram_id))[3:])
     return f"https://t.me/c/{tg_id}/{raw_msg.telegram_message_id}"
 
@@ -195,7 +192,6 @@ async def get_product_detail(
 
     offers = []
     for offer, display_name, raw_msg, source in offers_result.all():
-        # Prefer manually set channel_url, fall back to auto-built t.me link
         manual_url = source.channel_url if source else None
         tg_link = manual_url or _build_tg_link(source, raw_msg)
 
@@ -318,6 +314,18 @@ async def get_dashboard_stats(session: AsyncSession) -> DashboardStats:
     failed_count = (await session.execute(
         select(func.count(RawMessage.id)).where(RawMessage.parse_status == "failed")
     )).scalar() or 0
+    pending_count = (await session.execute(
+        select(func.count(RawMessage.id)).where(RawMessage.parse_status == "pending")
+    )).scalar() or 0
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    parsed_today = (await session.execute(
+        select(func.count(RawMessage.id)).where(
+            and_(
+                RawMessage.parse_status == "parsed",
+                RawMessage.updated_at >= today_start,
+            )
+        )
+    )).scalar() or 0
     last_collection = (await session.execute(select(func.max(Source.last_read_at)))).scalar()
     error_source_count = (await session.execute(
         select(func.count(Source.id)).where(Source.error_count > 0)
@@ -330,6 +338,8 @@ async def get_dashboard_stats(session: AsyncSession) -> DashboardStats:
         total_offers=total_offers,
         unresolved_count=unresolved_count,
         failed_count=failed_count,
+        pending_count=pending_count,
+        parsed_today=parsed_today,
         last_collection_at=last_collection,
         error_source_count=error_source_count,
     )

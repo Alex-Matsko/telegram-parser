@@ -46,15 +46,14 @@ class OfferDetail(BaseModel):
     confidence: float
     is_current: bool
     updated_at: datetime
-    # Source traceability
     raw_line: Optional[str] = None
     source_name: Optional[str] = None
     channel_url: Optional[str] = None
-    channel_telegram_id: Optional[int] = None      # for building t.me link
+    channel_telegram_id: Optional[int] = None
     message_date: Optional[datetime] = None
     raw_message_id: Optional[int] = None
-    telegram_message_id: Optional[int] = None      # actual Telegram message ID
-    message_text: Optional[str] = None             # full raw message text
+    telegram_message_id: Optional[int] = None
+    message_text: Optional[str] = None
 
 
 class PriceListDetailItem(BaseModel):
@@ -107,5 +106,7 @@ class DashboardStats(BaseModel):
     total_offers: int
     unresolved_count: int
     failed_count: int
+    pending_count: int
+    parsed_today: int
     last_collection_at: Optional[datetime] = None
     error_source_count: int
