@@ -238,7 +238,7 @@ async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> list[
                 {"role": "user", "content": text},
             ],
             "temperature": 0.0,
-            "max_tokens": 2000,
+            "max_tokens": 4096,
         },
     )
     response.raise_for_status()
@@ -278,7 +278,7 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
         if rate_limit_delay > 0:
             await asyncio.sleep(rate_limit_delay)
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             for model in models:
                 try:
                     offers = await _call_model(client, model, text)
@@ -303,7 +303,7 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
                     continue
 
                 except Exception as e:
-                    logger.error(f"LLM ({model}) unexpected error: {e}")
+                    logger.error(f"LLM ({model}) unexpected error: {type(e).__name__}: {e!r}")
                     last_error = e
                     continue
 
