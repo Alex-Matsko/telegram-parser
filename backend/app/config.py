@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     telegram_api_hash: str = ""
     telegram_session_string: str = ""
 
+    # Telegram SOCKS5 proxy (optional)
+    telegram_proxy_host: str = ""
+    telegram_proxy_port: int = 0
+
     # LLM — Groq only, verified active models as of 2026-03
     # Full list: https://console.groq.com/docs/models
     llm_api_url: str = "https://api.groq.com/openai/v1"
