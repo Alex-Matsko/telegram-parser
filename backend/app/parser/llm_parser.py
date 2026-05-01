@@ -1,12 +1,21 @@
 """
 LLM-based fallback parser for complex/ambiguous price messages.
 
+Ollama .env example:
+  LLM_API_URL=http://10.99.99.20:11434/v1
+  LLM_API_KEY=ollama
+  LLM_MODEL=qwen2.5:7b-instruct-ctx8k
+  LLM_FALLBACK_MODELS=
+  LLM_RATE_LIMIT_DELAY=0.0
+  LLM_CONCURRENCY=4
+
 Groq free tier .env example:
   LLM_API_URL=https://api.groq.com/openai/v1
   LLM_API_KEY=gsk_...
   LLM_MODEL=llama-3.3-70b-versatile
-  LLM_FALLBACK_MODELS=llama-3.1-8b-instant,gemma2-9b-it,mistral-saba-24b
+  LLM_FALLBACK_MODELS=llama-3.1-8b-instant
   LLM_RATE_LIMIT_DELAY=2.0
+  LLM_CONCURRENCY=1
 """
 import asyncio
 import json
@@ -20,8 +29,6 @@ from app.parser.regex_parser import ParsedOffer
 
 logger = logging.getLogger(__name__)
 
-# 400 = decommissioned model (treat as retriable so we move to next fallback)
-# 429 = rate limit, 404/503/502 = unavailable
 _FALLBACK_STATUS_CODES = {400, 429, 404, 503, 502}
 
 SYSTEM_PROMPT = """Ты — модуль нормализации прайсов электроники из Telegram-сообщений.
@@ -203,15 +210,18 @@ GoPro:
 Шаблон: {"items":[{"category":"smartphone","brand":"Apple","line":"iPhone","model":"iPhone 17 Pro","memory":"256GB","color":null,"condition":"new","sim_type":null,"price":96500,"currency":"RUB","confidence":0.9,"needs_review":false}]}
 """
 
-_llm_semaphore: asyncio.Semaphore | None = None
+# Семафор per event loop — безопасно для Celery prefork.
+# Каждый воркер-процесс имеет свой loop и свой семафор.
+_semaphore_map: dict[int, asyncio.Semaphore] = {}
 
 
 def _get_semaphore() -> asyncio.Semaphore:
-    global _llm_semaphore
-    if _llm_semaphore is None:
-        concurrency = getattr(settings, "llm_concurrency", 1)
-        _llm_semaphore = asyncio.Semaphore(concurrency)
-    return _llm_semaphore
+    loop = asyncio.get_event_loop()
+    loop_id = id(loop)
+    if loop_id not in _semaphore_map:
+        concurrency = getattr(settings, "llm_concurrency", 2)
+        _semaphore_map[loop_id] = asyncio.Semaphore(concurrency)
+    return _semaphore_map[loop_id]
 
 
 async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> list[ParsedOffer]:
@@ -261,14 +271,14 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
             seen.add(m)
             models.append(m)
 
-    rate_limit_delay: float = getattr(settings, "llm_rate_limit_delay", 2.0)
+    rate_limit_delay: float = getattr(settings, "llm_rate_limit_delay", 0.0)
     last_error: Exception | None = None
 
     async with _get_semaphore():
         if rate_limit_delay > 0:
             await asyncio.sleep(rate_limit_delay)
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             for model in models:
                 try:
                     offers = await _call_model(client, model, text)
@@ -281,7 +291,6 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
                         logger.warning(f"LLM '{model}' returned {status} — trying next fallback")
                         last_error = e
                         continue
-                    # 401 = bad key, stop immediately
                     logger.error(
                         f"LLM non-retriable HTTP {status} with '{model}': "
                         f"{e.response.text[:300]}"
@@ -300,6 +309,24 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
 
     logger.error(f"All {len(models)} LLM model(s) exhausted. Last error: {last_error}")
     return []
+
+
+async def parse_with_llm_batch(texts: list[str]) -> list[list[ParsedOffer]]:
+    """
+    Параллельная обработка нескольких сообщений через LLM.
+    Concurrency ограничен семафором (LLM_CONCURRENCY).
+    Возвращает список результатов в том же порядке что входные тексты.
+    """
+    tasks = [parse_with_llm(text) for text in texts]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    output = []
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            logger.error(f"LLM batch item {i} failed: {result}")
+            output.append([])
+        else:
+            output.append(result)
+    return output
 
 
 def _extract_json(content: str) -> str:

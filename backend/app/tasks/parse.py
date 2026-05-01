@@ -50,13 +50,16 @@ def parse_single_message(message_id: int):
 
 
 async def _parse_pending_messages_async() -> dict:
-    """Parse all pending raw messages — batch of 100."""
+    """Parse all pending raw messages — batch of 100, LLM calls run in parallel."""
     from sqlalchemy import select
 
     from app.config import settings
     from app.database import get_isolated_session
     from app.models.raw_message import RawMessage
     from app.models.source import Source
+    from app.parser.llm_parser import parse_with_llm_batch
+    from app.parser.regex_parser import is_obviously_not_price_message, parse_message
+    from app.parser.channel_strategy import preprocess_by_strategy
     from app.services.supplier_service import get_or_create_supplier_for_source
 
     stats = {
@@ -91,44 +94,95 @@ async def _parse_pending_messages_async() -> dict:
                 await get_or_create_supplier_for_source(source, session)
         await session.flush()
 
-        llm_calls_this_batch = 0
-        max_llm_calls = getattr(settings, "llm_max_per_batch", 20)
+        max_llm_calls = getattr(settings, "llm_max_per_batch", 50)
+
+        # ------------------------------------------------------------------ #
+        # Шаг 1: Regex pre-pass — быстрый прогон всех сообщений               #
+        # Собираем сообщения которым нужен LLM                                #
+        # ------------------------------------------------------------------ #
+        regex_results: dict[int, list] = {}   # msg.id -> offers
+        llm_needed: list[tuple] = []           # (msg, preprocessed_text)
 
         for msg in messages:
-            try:
-                source = sources_map.get(msg.source_id)
-                parsing_strategy = source.parsing_strategy if source else "auto"
-                line_format = source.line_format if source else None
-                supplier_id = source.supplier_id if source else None
+            source = sources_map.get(msg.source_id)
+            parsing_strategy = source.parsing_strategy if source else "auto"
+            line_format = source.line_format if source else None
+            text = msg.message_text
 
-                parse_result, skipped, used_llm, system_skip = await _process_single_message(
+            if is_obviously_not_price_message(text):
+                msg.parse_status = "failed"
+                msg.parse_error = "Not a price message (pre-filter)"
+                msg.is_processed = True
+                stats["system_skipped"] += 1
+                stats["processed"] += 1
+                regex_results[msg.id] = []
+                continue
+
+            preprocessed = preprocess_by_strategy(text, parsing_strategy, line_format)
+
+            if parsing_strategy in ("auto", "regex", "pipe", "table"):
+                parse_result = parse_message(preprocessed)
+                offers = parse_result.offers
+            else:
+                offers = []
+
+            needs_llm = (
+                parsing_strategy in ("auto", "llm")
+                and (
+                    not offers
+                    or all(o.confidence < settings.parser_confidence_threshold for o in offers)
+                )
+                and len(llm_needed) < max_llm_calls
+            )
+
+            if needs_llm:
+                llm_needed.append((msg, preprocessed))
+            else:
+                regex_results[msg.id] = offers
+
+        # ------------------------------------------------------------------ #
+        # Шаг 2: Параллельные LLM вызовы для всех нуждающихся сообщений      #
+        # ------------------------------------------------------------------ #
+        llm_results: dict[int, list] = {}
+        if llm_needed:
+            logger.info(f"LLM parallel batch: {len(llm_needed)} messages")
+            texts = [t for _, t in llm_needed]
+            batch_offers = await parse_with_llm_batch(texts)
+            for (msg, _), offers in zip(llm_needed, batch_offers):
+                llm_results[msg.id] = offers
+            stats["llm_calls"] = len(llm_needed)
+
+        # ------------------------------------------------------------------ #
+        # Шаг 3: Сохранение результатов в БД                                 #
+        # ------------------------------------------------------------------ #
+        for msg in messages:
+            if msg.parse_status in ("failed",) and msg.is_processed:
+                continue
+
+            source = sources_map.get(msg.source_id)
+            supplier_id = source.supplier_id if source else None
+
+            offers = llm_results.get(msg.id) or regex_results.get(msg.id, [])
+
+            try:
+                status, skipped = await _save_offers(
                     session=session,
                     message=msg,
-                    parsing_strategy=parsing_strategy,
-                    line_format=line_format,
+                    parsed_offers=offers,
                     supplier_id=supplier_id,
                     confidence_threshold=settings.parser_confidence_threshold,
                     skip_unchanged=settings.skip_unchanged_prices,
-                    llm_budget=max_llm_calls - llm_calls_this_batch,
                 )
-
-                if used_llm:
-                    llm_calls_this_batch += 1
-
                 stats["processed"] += 1
                 stats["skipped_unchanged"] += skipped
-                stats["llm_calls"] = llm_calls_this_batch
-                stats["system_skipped"] += 1 if system_skip else 0
-
-                if parse_result == "parsed":
+                if status == "parsed":
                     stats["parsed"] += 1
-                elif parse_result == "needs_review":
+                elif status == "needs_review":
                     stats["needs_review"] += 1
                 else:
                     stats["failed"] += 1
-
             except Exception as e:
-                logger.error(f"Error parsing message {msg.id}: {e}")
+                logger.error(f"Error saving message {msg.id}: {e}")
                 msg.parse_status = "failed"
                 msg.parse_error = str(e)[:1000]
                 msg.is_processed = True
@@ -141,177 +195,41 @@ async def _parse_pending_messages_async() -> dict:
     return stats
 
 
-async def _parse_single_message_async(message_id: int) -> dict:
-    from sqlalchemy import select
-
-    from app.config import settings
-    from app.database import get_isolated_session
-    from app.models.raw_message import RawMessage
-    from app.models.source import Source
-    from app.services.supplier_service import get_or_create_supplier_for_source
-
-    async with get_isolated_session() as session:
-        result = await session.execute(
-            select(RawMessage).where(RawMessage.id == message_id)
-        )
-        message = result.scalar_one_or_none()
-        if not message:
-            return {"error": f"Message {message_id} not found"}
-
-        source_result = await session.execute(
-            select(Source).where(Source.id == message.source_id)
-        )
-        source = source_result.scalar_one_or_none()
-        parsing_strategy = source.parsing_strategy if source else "auto"
-        line_format = source.line_format if source else None
-
-        if source and not source.supplier_id:
-            await get_or_create_supplier_for_source(source, session)
-            await session.flush()
-
-        supplier_id = source.supplier_id if source else None
-
-        status, _, _, _ = await _process_single_message(
-            session=session,
-            message=message,
-            parsing_strategy=parsing_strategy,
-            line_format=line_format,
-            supplier_id=supplier_id,
-            confidence_threshold=settings.parser_confidence_threshold,
-            skip_unchanged=settings.skip_unchanged_prices,
-            llm_budget=1,
-        )
-
-        await session.commit()
-        return {"message_id": message_id, "status": status}
-
-
-async def _process_single_message(
+async def _save_offers(
     session,
     message,
-    parsing_strategy: str,
-    line_format: str | None,
+    parsed_offers: list,
     supplier_id: int | None,
     confidence_threshold: float,
     skip_unchanged: bool = True,
-    llm_budget: int = 1,
-) -> tuple[str, int, bool, bool]:
-    """
-    Returns: (status, skipped_unchanged_count, used_llm, system_skip)
-    system_skip=True means message was filtered before regex/LLM.
-    llm_budget=0 means skip LLM entirely (mark needs_review).
-    """
+) -> tuple[str, int]:
+    """Сохранить оферы из одного сообщения. Возвращает (status, skipped_count)."""
     from app.models.offer import Offer
     from app.models.price_history import PriceHistory
-    from app.parser.channel_strategy import preprocess_by_strategy
-    from app.parser.llm_parser import parse_with_llm
     from app.parser.normalizer import normalize_and_match
-    from app.parser.regex_parser import is_obviously_not_price_message, parse_message
 
-    text = message.message_text
-
-    # ------------------------------------------------------------------ #
-    # Pre-filter: системные сообщения бота, мусор без признаков цены      #
-    # ------------------------------------------------------------------ #
-    if is_obviously_not_price_message(text):
-        logger.debug(f"Message {message.id} is not a price message — skipped (pre-filter)")
-        message.parse_status = "failed"
-        message.parse_error = "Not a price message (pre-filter)"
-        message.is_processed = True
-        await session.flush()
-        return "failed", 0, False, True
-
-    # ------------------------------------------------------------------ #
-    # Channel-strategy preprocessing (pipe / table / passthrough)         #
-    # ------------------------------------------------------------------ #
-    preprocessed_text = preprocess_by_strategy(text, parsing_strategy, line_format)
-    if preprocessed_text != text:
-        logger.debug(
-            f"Message {message.id}: strategy='{parsing_strategy}' "
-            f"transformed text ({len(text)} -> {len(preprocessed_text)} chars)"
-        )
-
-    offers_created = 0
-    skipped_unchanged = 0
-    used_llm = False
-
-    # Step 1: Regex parser
-    # pipe/table strategies always use regex on the preprocessed text;
-    # LLM fallback is disabled for them (structure is already normalised).
-    parsed_offers = []
-    run_regex = parsing_strategy in ("auto", "regex", "pipe", "table")
-    if run_regex:
-        parse_result = parse_message(preprocessed_text)
-        parsed_offers = parse_result.offers
-        logger.debug(
-            f"Regex parser: {len(parsed_offers)} offers, "
-            f"unparsed lines: {len(parse_result.unparsed_lines)}"
-        )
-
-    # Step 2: LLM fallback
-    # Pipe/table strategies skip LLM — if regex couldn't parse the
-    # pre-processed text, there's likely a format config issue.
-    needs_llm = (
-        parsing_strategy == "auto"
-        and (
-            not parsed_offers
-            or all(o.confidence < confidence_threshold for o in parsed_offers)
-        )
-    )
-
-    if needs_llm:
-        if llm_budget <= 0:
-            logger.debug(f"LLM budget exhausted, skipping message {message.id} — needs_review")
-            message.parse_status = "needs_review"
-            message.parse_error = "LLM budget exhausted for this batch"
-            message.is_processed = True
-            return "needs_review", 0, False, False
-
-        logger.debug(f"Falling back to LLM for message {message.id}")
-        llm_offers = await parse_with_llm(preprocessed_text)
-        used_llm = True
-        if llm_offers:
-            parsed_offers = llm_offers
-
-    if parsing_strategy == "llm":
-        if llm_budget > 0:
-            parsed_offers = await parse_with_llm(preprocessed_text)
-            used_llm = True
-        else:
-            message.parse_status = "needs_review"
-            message.parse_error = "LLM budget exhausted for this batch"
-            message.is_processed = True
-            return "needs_review", 0, False, False
-
-    # Step 3: No offers extracted
     if not parsed_offers:
         message.parse_status = "failed"
         message.parse_error = "No offers could be extracted from the message"
         message.is_processed = True
-        return "failed", 0, used_llm, False
+        return "failed", 0
 
-    # Step 4: Process each parsed offer
     any_success = False
     any_needs_review = False
+    skipped_unchanged = 0
 
     for parsed_offer in parsed_offers:
         if not supplier_id:
             any_needs_review = True
-            logger.warning(f"Message {message.id}: supplier_id missing — needs_review")
             continue
 
         if parsed_offer.price is None or parsed_offer.price <= 0:
-            logger.debug(f"Offer skipped: no valid price ({parsed_offer.price})")
             any_needs_review = True
             continue
 
         product, match_confidence = await normalize_and_match(parsed_offer, session)
 
         if product is None or match_confidence < confidence_threshold:
-            logger.debug(
-                f"Offer needs review: product={product}, "
-                f"match_confidence={match_confidence:.2f}"
-            )
             any_needs_review = True
             continue
 
@@ -326,13 +244,10 @@ async def _process_single_message(
             )
         )
         existing_offers = existing_result.scalars().all()
-
         new_price = Decimal(str(parsed_offer.price))
 
         if skip_unchanged and existing_offers:
-            current_price = existing_offers[0].price
-            if current_price == new_price:
-                logger.debug(f"Skipping unchanged price {new_price}")
+            if existing_offers[0].price == new_price:
                 any_success = True
                 skipped_unchanged += 1
                 continue
@@ -360,29 +275,92 @@ async def _process_single_message(
             currency=parsed_offer.currency,
         )
         session.add(history_entry)
-
-        offers_created += 1
         any_success = True
         logger.info(
             f"Created offer: {parsed_offer.model} {parsed_offer.memory} "
             f"@ {parsed_offer.price} {parsed_offer.currency}"
         )
 
-    # Step 5: Final status
     if any_success:
         message.parse_status = "parsed"
         message.is_processed = True
-        status = "parsed"
+        return "parsed", skipped_unchanged
     elif any_needs_review:
         message.parse_status = "needs_review"
         message.parse_error = "Low confidence or no valid price"
         message.is_processed = True
-        status = "needs_review"
+        return "needs_review", 0
     else:
         message.parse_status = "failed"
         message.parse_error = "Failed to create any offers"
         message.is_processed = True
-        status = "failed"
+        return "failed", 0
 
-    await session.flush()
-    return status, skipped_unchanged, used_llm, False
+
+async def _parse_single_message_async(message_id: int) -> dict:
+    from sqlalchemy import select
+
+    from app.config import settings
+    from app.database import get_isolated_session
+    from app.models.raw_message import RawMessage
+    from app.models.source import Source
+    from app.parser.llm_parser import parse_with_llm
+    from app.parser.regex_parser import is_obviously_not_price_message, parse_message
+    from app.parser.channel_strategy import preprocess_by_strategy
+    from app.services.supplier_service import get_or_create_supplier_for_source
+
+    async with get_isolated_session() as session:
+        result = await session.execute(
+            select(RawMessage).where(RawMessage.id == message_id)
+        )
+        message = result.scalar_one_or_none()
+        if not message:
+            return {"error": f"Message {message_id} not found"}
+
+        source_result = await session.execute(
+            select(Source).where(Source.id == message.source_id)
+        )
+        source = source_result.scalar_one_or_none()
+        parsing_strategy = source.parsing_strategy if source else "auto"
+        line_format = source.line_format if source else None
+
+        if source and not source.supplier_id:
+            await get_or_create_supplier_for_source(source, session)
+            await session.flush()
+
+        supplier_id = source.supplier_id if source else None
+        text = message.message_text
+
+        if is_obviously_not_price_message(text):
+            message.parse_status = "failed"
+            message.parse_error = "Not a price message (pre-filter)"
+            message.is_processed = True
+            await session.commit()
+            return {"message_id": message_id, "status": "failed"}
+
+        preprocessed = preprocess_by_strategy(text, parsing_strategy, line_format)
+        offers = []
+
+        if parsing_strategy in ("auto", "regex", "pipe", "table"):
+            parse_result = parse_message(preprocessed)
+            offers = parse_result.offers
+
+        needs_llm = (
+            parsing_strategy in ("auto", "llm")
+            and (not offers or all(o.confidence < settings.parser_confidence_threshold for o in offers))
+        )
+        if needs_llm:
+            llm_offers = await parse_with_llm(preprocessed)
+            if llm_offers:
+                offers = llm_offers
+
+        status, _ = await _save_offers(
+            session=session,
+            message=message,
+            parsed_offers=offers,
+            supplier_id=supplier_id,
+            confidence_threshold=settings.parser_confidence_threshold,
+            skip_unchanged=settings.skip_unchanged_prices,
+        )
+        await session.commit()
+        return {"message_id": message_id, "status": status}
