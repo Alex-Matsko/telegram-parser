@@ -8,12 +8,10 @@ from app.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 # Размер батча — сколько сообщений за один запуск
-# LLM-вызовы теперь последовательные, поэтому батч можно брать больше
 PARSE_BATCH_SIZE = 50
 
-# Макс LLM-запросов за один запуск задачи
-# Ollama ~75с / запрос, soft_time_limit=240с => макс 3 запроса безопасно
-LLM_MAX_PER_RUN = 3
+# Макс LLM-запросов за один запуск задачи (0 = без ограничений)
+LLM_MAX_PER_RUN = 50
 
 
 def _run_async(coro):
@@ -29,8 +27,8 @@ def _run_async(coro):
 @celery_app.task(
     bind=True,
     max_retries=0,  # не ретрайтить — следующий запуск beat через 60с
-    soft_time_limit=240,
-    time_limit=270,
+    soft_time_limit=3600,
+    time_limit=3660,
 )
 def parse_pending_messages(self):
     """
@@ -148,7 +146,7 @@ async def _parse_pending_messages_async() -> dict:
                 regex_results[msg.id] = offers
 
         # ------------------------------------------------------------------ #
-        # Шаг 2: LLM последовательно (не параллельно!) для первых LLM_MAX_PER_RUN  #
+        # Шаг 2: LLM последовательно для первых LLM_MAX_PER_RUN              #
         # ------------------------------------------------------------------ #
         llm_results: dict[int, list] = {}
         if llm_needed:
