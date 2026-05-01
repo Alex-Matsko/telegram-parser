@@ -322,7 +322,7 @@ async def get_dashboard_stats(session: AsyncSession) -> DashboardStats:
         select(func.count(RawMessage.id)).where(
             and_(
                 RawMessage.parse_status == "parsed",
-                RawMessage.updated_at >= today_start,
+                RawMessage.created_at >= today_start,
             )
         )
     )).scalar() or 0
