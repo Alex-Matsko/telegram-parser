@@ -34,8 +34,8 @@ _FALLBACK_STATUS_CODES = {400, 429, 404, 503, 502}
 # connect быстрый, read большой — LLM может думать долго
 _LLM_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
 
-# max_tokens небольшой — JSON-ответ не требует много токенов
-_MAX_TOKENS = 512
+# Системный промпт ~800 токенов, JSON ответ до 1000 токенов → итого нужно ~2000
+_MAX_TOKENS = 2048
 
 SYSTEM_PROMPT = """Ты — модуль нормализации прайсов электроники из Telegram-сообщений.
 
