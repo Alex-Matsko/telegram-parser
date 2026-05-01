@@ -1,20 +1,14 @@
 import { useEffect, useState } from 'react';
 import { getStats } from '../api/client';
-
-interface Stats {
-  pending_count: number;
-  parsed_today: number;
-  unresolved_count: number;
-  failed_count: number;
-}
+import type { DashboardStats } from '../types';
 
 const POLL_MS = 5000;
 
 export default function ParseTicker() {
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
 
   useEffect(() => {
-    const fetch = async () => {
+    const poll = async () => {
       try {
         const data = await getStats();
         setStats(data);
@@ -22,14 +16,18 @@ export default function ParseTicker() {
         // silent
       }
     };
-    fetch();
-    const id = setInterval(fetch, POLL_MS);
+    poll();
+    const id = setInterval(poll, POLL_MS);
     return () => clearInterval(id);
   }, []);
 
   if (!stats) return null;
 
-  const isParsing = stats.pending_count > 0;
+  const pendingCount = stats.pending_count ?? 0;
+  const parsedToday = stats.parsed_today ?? 0;
+  const unresolvedCount = stats.unresolved_count ?? stats.pending_reviews ?? 0;
+  const failedCount = stats.failed_count ?? stats.failed_parses ?? 0;
+  const isParsing = pendingCount > 0;
 
   return (
     <div className="flex items-center gap-3 text-[11px] font-mono select-none">
@@ -43,7 +41,7 @@ export default function ParseTicker() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
             </span>
-            <span>Парсинг: <strong>{stats.pending_count}</strong> в очереди</span>
+            <span>Парсинг: <strong>{pendingCount}</strong> в очереди</span>
           </>
         ) : (
           <>
@@ -57,25 +55,25 @@ export default function ParseTicker() {
 
       {/* Parsed today */}
       <span className="text-gray-400">
-        Разобрано сегодня: <strong className="text-gray-200">{stats.parsed_today}</strong>
+        Разобрано сегодня: <strong className="text-gray-200">{parsedToday}</strong>
       </span>
 
       {/* Unresolved */}
-      {stats.unresolved_count > 0 && (
+      {unresolvedCount > 0 && (
         <>
           <span className="text-gray-600">|</span>
           <span className="text-yellow-400">
-            На проверке: <strong>{stats.unresolved_count}</strong>
+            На проверке: <strong>{unresolvedCount}</strong>
           </span>
         </>
       )}
 
       {/* Failed */}
-      {stats.failed_count > 0 && (
+      {failedCount > 0 && (
         <>
           <span className="text-gray-600">|</span>
           <span className="text-red-400">
-            Ошибки: <strong>{stats.failed_count}</strong>
+            Ошибки: <strong>{failedCount}</strong>
           </span>
         </>
       )}
