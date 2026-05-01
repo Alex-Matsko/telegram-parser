@@ -31,10 +31,7 @@ logger = logging.getLogger(__name__)
 
 _FALLBACK_STATUS_CODES = {400, 429, 404, 503, 502}
 
-# connect быстрый, read большой — LLM может думать долго
 _LLM_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
-
-# Системный промпт ~800 токенов, JSON ответ до 1000 токенов → итого нужно ~2000
 _MAX_TOKENS = 2048
 
 SYSTEM_PROMPT = """Ты — модуль нормализации прайсов электроники из Telegram-сообщений.
@@ -133,17 +130,18 @@ async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> list[
     data = response.json()
     content = data["choices"][0]["message"]["content"].strip()
 
-    # Пустой ответ — модель не нашла офферов, это НЕ ошибка
     if not content:
         logger.info(f"LLM ({model}) returned empty response — no offers in message")
         return []
 
-    content = _extract_json(content)
+    extracted = _extract_json(content)
 
     try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError as e:
-        raise e
+        parsed = json.loads(extracted)
+    except json.JSONDecodeError:
+        # Невалидный JSON — логируем что пришло и возвращаем [] без ретраев
+        logger.warning(f"LLM ({model}) invalid JSON, treating as no offers. Content: {content[:200]!r}")
+        return []
 
     if isinstance(parsed, dict) and "items" in parsed:
         offers_raw = parsed["items"]
@@ -169,7 +167,6 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
             models.append(m)
 
     rate_limit_delay: float = getattr(settings, "llm_rate_limit_delay", 0.0)
-    last_error: Exception | None = None
 
     async with _get_semaphore():
         if rate_limit_delay > 0:
@@ -177,51 +174,33 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
 
         async with httpx.AsyncClient(timeout=_LLM_TIMEOUT) as client:
             for model in models:
-                for attempt in range(3):
-                    try:
-                        offers = await _call_model(client, model, text)
-                        logger.info(f"LLM ({model}) parsed {len(offers)} offer(s)")
-                        return offers
+                try:
+                    offers = await _call_model(client, model, text)
+                    logger.info(f"LLM ({model}) parsed {len(offers)} offer(s)")
+                    return offers
 
-                    except httpx.HTTPStatusError as e:
-                        status = e.response.status_code
-                        if status in _FALLBACK_STATUS_CODES:
-                            logger.warning(f"LLM '{model}' returned {status} — trying next fallback")
-                            last_error = e
-                            break
-                        logger.error(f"LLM non-retriable HTTP {status} with '{model}': {e.response.text[:300]}")
-                        return []
+                except httpx.HTTPStatusError as e:
+                    status = e.response.status_code
+                    if status in _FALLBACK_STATUS_CODES:
+                        logger.warning(f"LLM '{model}' returned {status} — trying next fallback")
+                        continue
+                    logger.error(f"LLM non-retriable HTTP {status}: {e.response.text[:300]}")
+                    return []
 
-                    except json.JSONDecodeError as e:
-                        if attempt < 2:
-                            logger.warning(f"LLM ({model}) invalid JSON, retry {attempt + 1}/2")
-                            await asyncio.sleep(1.0)
-                            continue
-                        logger.error(f"LLM ({model}) invalid JSON after retries: {e}")
-                        last_error = e
-                        break
+                except httpx.ReadTimeout:
+                    logger.error(f"LLM ({model}) read timeout — trying next model")
+                    continue
 
-                    except ValueError as e:
-                        logger.error(f"LLM ({model}) parse error: {type(e).__name__}: {e}")
-                        last_error = e
-                        break
+                except Exception as e:
+                    logger.error(f"LLM ({model}) unexpected error: {type(e).__name__}: {e!r}")
+                    return []
 
-                    except httpx.ReadTimeout:
-                        logger.error(f"LLM ({model}) read timeout — trying next model")
-                        last_error = Exception("ReadTimeout")
-                        break
-
-                    except Exception as e:
-                        logger.error(f"LLM ({model}) unexpected error: {type(e).__name__}: {e!r}")
-                        last_error = e
-                        break
-
-    logger.error(f"All {len(models)} LLM model(s) exhausted. Last error: {last_error}")
+    logger.error(f"All {len(models)} LLM model(s) exhausted")
     return []
 
 
 async def parse_with_llm_batch(texts: list[str]) -> list[list[ParsedOffer]]:
-    """Оставлено для обратной совместимости. Используй parse_with_llm напрямую."""
+    """Batch wrapper."""
     results = []
     for text in texts:
         try:
