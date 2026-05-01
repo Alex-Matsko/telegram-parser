@@ -34,6 +34,41 @@ def _unique_message_id() -> int:
     return uuid.uuid4().int & 0x7FFFFFFF
 
 
+async def _resolve_entity(client: TelegramClient, source: Source):
+    """
+    Резолвит entity бота с fallback:
+    1. По telegram_id (числовой ID)
+    2. По username из source_name (если ID не найден в кэше сессии)
+    """
+    # Попытка 1: по числовому ID
+    try:
+        return await client.get_entity(source.telegram_id)
+    except ValueError:
+        pass
+
+    # Попытка 2: по username из source_name (может быть '@botname' или 'botname')
+    username = source.source_name
+    if username and not username.startswith("@"):
+        username = f"@{username}"
+    if username:
+        try:
+            entity = await client.get_entity(username)
+            logger.info(
+                f"[BOT:{source.source_name}] ✔ Entity resolved via username fallback: "
+                f"type={type(entity).__name__} | id={getattr(entity, 'id', '?')}"
+            )
+            return entity
+        except ValueError:
+            pass
+
+    # Ничего не сработало
+    raise ValueError(
+        f"Could not find the input entity for telegram_id={source.telegram_id} "
+        f"and username='{source.source_name}'. "
+        f"Make sure the account has previously interacted with this bot."
+    )
+
+
 async def execute_bot_scenario(
     client: TelegramClient,
     source: Source,
@@ -65,7 +100,7 @@ async def execute_bot_scenario(
         logger.debug(
             f"[BOT:{source.source_name}] Resolving entity telegram_id={source.telegram_id} ..."
         )
-        entity = await client.get_entity(source.telegram_id)
+        entity = await _resolve_entity(client, source)
         logger.info(
             f"[BOT:{source.source_name}] ✔ Entity resolved: "
             f"type={type(entity).__name__} | id={getattr(entity, 'id', '?')}"

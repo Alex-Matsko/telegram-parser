@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 
 _FALLBACK_STATUS_CODES = {400, 429, 404, 503, 502}
 
+# Таймауты httpx: connect быстрый, read большой — LLM может думать долго
+_LLM_TIMEOUT = httpx.Timeout(connect=5.0, read=150.0, write=10.0, pool=5.0)
+
 SYSTEM_PROMPT = """Ты — модуль нормализации прайсов электроники из Telegram-сообщений.
 
 Твоя задача:
@@ -278,7 +281,7 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
         if rate_limit_delay > 0:
             await asyncio.sleep(rate_limit_delay)
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=_LLM_TIMEOUT) as client:
             for model in models:
                 try:
                     offers = await _call_model(client, model, text)
@@ -299,6 +302,17 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
 
                 except json.JSONDecodeError as e:
                     logger.error(f"LLM ({model}) invalid JSON: {e}")
+                    last_error = e
+                    continue
+
+                except ValueError as e:
+                    # Обрабатываем ошибки вроде 'substring not found' при извлечении JSON
+                    logger.error(f"LLM ({model}) parse error: {type(e).__name__}: {e}")
+                    last_error = e
+                    continue
+
+                except httpx.ReadTimeout as e:
+                    logger.error(f"LLM ({model}) read timeout — trying next model")
                     last_error = e
                     continue
 
@@ -330,14 +344,23 @@ async def parse_with_llm_batch(texts: list[str]) -> list[list[ParsedOffer]]:
 
 
 def _extract_json(content: str) -> str:
+    """Извлекает JSON из ответа LLM, убирая markdown-блоки если есть."""
+    # Попытка извлечь из ```json ... ```
     if "```json" in content:
-        start = content.index("```json") + 7
-        end = content.index("```", start)
-        return content[start:end].strip()
+        try:
+            start = content.index("```json") + 7
+            end = content.index("```", start)
+            return content[start:end].strip()
+        except ValueError:
+            pass
+    # Попытка извлечь из ``` ... ```
     if "```" in content:
-        start = content.index("```") + 3
-        end = content.index("```", start)
-        return content[start:end].strip()
+        try:
+            start = content.index("```") + 3
+            end = content.index("```", start)
+            return content[start:end].strip()
+        except ValueError:
+            pass
     return content
 
 
