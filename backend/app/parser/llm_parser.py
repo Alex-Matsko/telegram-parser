@@ -49,6 +49,7 @@ SYSTEM_PROMPT = """Ты — модуль нормализации прайсов
 6. Если уверенность < 0.7, установить "needs_review": true.
 7. Не додумывать данные, если их нет явно.
 8. Если несколько позиций — вернуть массив объектов в поле "items".
+9. Если сообщение НЕ является прайсом (обычный чат, вопросы, приветствия) — верни {"items": []}.
 
 == КРИТИЧЕСКИЕ ПРАВИЛА РАЗБОРА ЦИФР ==
 
@@ -132,11 +133,17 @@ async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> list[
     data = response.json()
     content = data["choices"][0]["message"]["content"].strip()
 
+    # Пустой ответ — модель не нашла офферов, это НЕ ошибка
     if not content:
-        raise json.JSONDecodeError("Empty response from LLM", "", 0)
+        logger.info(f"LLM ({model}) returned empty response — no offers in message")
+        return []
 
     content = _extract_json(content)
-    parsed = json.loads(content)
+
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError as e:
+        raise e
 
     if isinstance(parsed, dict) and "items" in parsed:
         offers_raw = parsed["items"]
@@ -187,7 +194,7 @@ async def parse_with_llm(text: str) -> list[ParsedOffer]:
 
                     except json.JSONDecodeError as e:
                         if attempt < 2:
-                            logger.warning(f"LLM ({model}) empty/invalid JSON, retry {attempt + 1}/2")
+                            logger.warning(f"LLM ({model}) invalid JSON, retry {attempt + 1}/2")
                             await asyncio.sleep(1.0)
                             continue
                         logger.error(f"LLM ({model}) invalid JSON after retries: {e}")
