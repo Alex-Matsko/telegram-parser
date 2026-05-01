@@ -31,8 +31,10 @@ logger = logging.getLogger(__name__)
 
 _FALLBACK_STATUS_CODES = {400, 429, 404, 503, 502}
 
-_LLM_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
-_MAX_TOKENS = 2048
+_LLM_TIMEOUT = httpx.Timeout(connect=5.0, read=180.0, write=10.0, pool=5.0)
+
+# qwen2.5:7b-instruct-ctx8k имеет 8k контекст — даём максимум для ответа
+_MAX_TOKENS = 8192
 
 SYSTEM_PROMPT = """Ты — модуль нормализации прайсов электроники из Telegram-сообщений.
 
@@ -139,7 +141,6 @@ async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> list[
     try:
         parsed = json.loads(extracted)
     except json.JSONDecodeError:
-        # Невалидный JSON — логируем что пришло и возвращаем [] без ретраев
         logger.warning(f"LLM ({model}) invalid JSON, treating as no offers. Content: {content[:200]!r}")
         return []
 
