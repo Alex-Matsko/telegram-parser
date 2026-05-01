@@ -7,8 +7,13 @@ from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
-# Максимальный размер батча для LLM — чем меньше, тем меньше шанс SoftTimeLimitExceeded
+# Размер батча — сколько сообщений за один запуск
+# LLM-вызовы теперь последовательные, поэтому батч можно брать больше
 PARSE_BATCH_SIZE = 50
+
+# Макс LLM-запросов за один запуск задачи
+# Ollama ~75с / запрос, soft_time_limit=240с => макс 3 запроса безопасно
+LLM_MAX_PER_RUN = 3
 
 
 def _run_async(coro):
@@ -23,22 +28,21 @@ def _run_async(coro):
 
 @celery_app.task(
     bind=True,
-    max_retries=2,
-    default_retry_delay=30,
-    soft_time_limit=300,
-    time_limit=360,
+    max_retries=0,  # не ретрайтить — следующий запуск beat через 60с
+    soft_time_limit=240,
+    time_limit=270,
 )
 def parse_pending_messages(self):
     """
-    Periodic task: parse all unprocessed raw messages.
-    Runs every minute via Celery Beat.
+    Periodic task: parse pending raw messages.
+    LLM вызовы последовательные, макс LLM_MAX_PER_RUN штук за запуск.
     """
     try:
         result = _run_async(_parse_pending_messages_async())
         return result
     except Exception as exc:
         logger.error(f"Parse task failed: {exc}")
-        raise self.retry(exc=exc)
+        raise
 
 
 @celery_app.task
@@ -53,14 +57,18 @@ def parse_single_message(message_id: int):
 
 
 async def _parse_pending_messages_async() -> dict:
-    """Parse pending raw messages — batch of PARSE_BATCH_SIZE, LLM calls run in parallel."""
+    """Parse pending raw messages.
+
+    Regex-проход для всех, LLM последовательно для первых LLM_MAX_PER_RUN сообщений.
+    Оставшиеся необработанные LLM-сообщения остаются pending — следующий запуск их возьмёт.
+    """
     from sqlalchemy import select
 
     from app.config import settings
     from app.database import get_isolated_session
     from app.models.raw_message import RawMessage
     from app.models.source import Source
-    from app.parser.llm_parser import parse_with_llm_batch
+    from app.parser.llm_parser import parse_with_llm
     from app.parser.regex_parser import is_obviously_not_price_message, parse_message
     from app.parser.channel_strategy import preprocess_by_strategy
     from app.services.supplier_service import get_or_create_supplier_for_source
@@ -97,14 +105,11 @@ async def _parse_pending_messages_async() -> dict:
                 await get_or_create_supplier_for_source(source, session)
         await session.flush()
 
-        max_llm_calls = getattr(settings, "llm_max_per_batch", PARSE_BATCH_SIZE)
-
         # ------------------------------------------------------------------ #
         # Шаг 1: Regex pre-pass — быстрый прогон всех сообщений               #
-        # Собираем сообщения которым нужен LLM                                #
         # ------------------------------------------------------------------ #
-        regex_results: dict[int, list] = {}   # msg.id -> offers
-        llm_needed: list[tuple] = []           # (msg, preprocessed_text)
+        regex_results: dict[int, list] = {}
+        llm_needed: list[tuple] = []  # (msg, preprocessed_text)
 
         for msg in messages:
             source = sources_map.get(msg.source_id)
@@ -135,25 +140,27 @@ async def _parse_pending_messages_async() -> dict:
                     not offers
                     or all(o.confidence < settings.parser_confidence_threshold for o in offers)
                 )
-                and len(llm_needed) < max_llm_calls
             )
 
-            if needs_llm:
+            if needs_llm and len(llm_needed) < LLM_MAX_PER_RUN:
                 llm_needed.append((msg, preprocessed))
             else:
                 regex_results[msg.id] = offers
 
         # ------------------------------------------------------------------ #
-        # Шаг 2: Параллельные LLM вызовы для всех нуждающихся сообщений      #
+        # Шаг 2: LLM последовательно (не параллельно!) для первых LLM_MAX_PER_RUN  #
         # ------------------------------------------------------------------ #
         llm_results: dict[int, list] = {}
         if llm_needed:
-            logger.info(f"LLM parallel batch: {len(llm_needed)} messages")
-            texts = [t for _, t in llm_needed]
-            batch_offers = await parse_with_llm_batch(texts)
-            for (msg, _), offers in zip(llm_needed, batch_offers):
-                llm_results[msg.id] = offers
-            stats["llm_calls"] = len(llm_needed)
+            logger.info(f"LLM sequential: {len(llm_needed)} messages (max {LLM_MAX_PER_RUN})")
+            for msg, text in llm_needed:
+                try:
+                    offers = await parse_with_llm(text)
+                    llm_results[msg.id] = offers
+                    stats["llm_calls"] += 1
+                except Exception as e:
+                    logger.error(f"LLM failed for msg {msg.id}: {e}")
+                    llm_results[msg.id] = []
 
         # ------------------------------------------------------------------ #
         # Шаг 3: Сохранение результатов в БД                                 #
@@ -206,7 +213,7 @@ async def _save_offers(
     confidence_threshold: float,
     skip_unchanged: bool = True,
 ) -> tuple[str, int]:
-    """Сохранить оферы из одного сообщения. Возвращает (status, skipped_count)."""
+    """Save offers from one message. Returns (status, skipped_count)."""
     from app.models.offer import Offer
     from app.models.price_history import PriceHistory
     from app.parser.normalizer import normalize_and_match
