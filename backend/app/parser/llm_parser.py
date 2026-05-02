@@ -20,6 +20,7 @@ Groq free tier .env example:
 import asyncio
 import json
 import logging
+import re
 from typing import Optional
 
 import httpx
@@ -36,6 +37,16 @@ _LLM_TIMEOUT = httpx.Timeout(connect=5.0, read=180.0, write=10.0, pool=5.0)
 # Реальный максимум: 30 позиций × ~50 токенов = ~1500. 8192 было причиной
 # того что модель генерировала тысячи токенов и обрезала JSON на полуслове.
 _MAX_TOKENS = 1500
+
+# Допустимые объёмы памяти (GB) — НЕ являются ценой
+_STORAGE_VALUES = {32, 64, 128, 256, 512, 1024, 2048}
+
+# Номера моделей iPhone — НЕ являются частью цены
+_IPHONE_MODELS = {11, 12, 13, 14, 15, 16, 17}
+
+# Минимальная и максимальная разумная цена в RUB
+_PRICE_MIN_RUB = 3_000
+_PRICE_MAX_RUB = 1_500_000
 
 SYSTEM_PROMPT = """Ты — модуль нормализации прайсов электроники из Telegram-сообщений.
 
@@ -93,7 +104,12 @@ SYSTEM_PROMPT = """Ты — модуль нормализации прайсов
 7. СОСТОЯНИЕ: new/used/refurbished. По умолчанию new.
    б/у,бу,bu,like new→used; ref,refurb,cpo→refurbished
 
-8. МОДЕЛЬ vs ПАМЯТЬ: "16 256 Black-62700"→model="iPhone 16",memory="256GB" (не model=16256!)
+8. МОДЕЛЬ vs ПАМЯТЬ: "16 256 Black-62700"→model="iPhone 16",memory="256GB",price=62700
+   ЗАПРЕЩЕНО: price=16256, price=16128, price=15512, price=14256 и подобное!
+   Цена НИКОГДА не может быть склейкой номера модели и объёма памяти!
+
+9. МИНИМАЛЬНАЯ ЦЕНА: для техники Apple минимум 3000 RUB.
+   Числа 16, 256, 128, 512, 1024, 11, 12, 13, 14, 15, 16, 17 — НЕ ЦЕНЫ!
 
 == ОТВЕЧАЙ ТОЛЬКО ВАЛИДНЫМ JSON БЕЗ ПОЯСНЕНИЙ И БЕЗ ```json ОБЁРТКИ ==
 Шаблон: {"items":[{"category":"smartphone","brand":"Apple","line":"iPhone","model":"iPhone 17 Pro","memory":"256GB","color":null,"condition":"new","sim_type":null,"price":96500,"currency":"RUB","confidence":0.9,"needs_review":false}]}
@@ -109,6 +125,42 @@ def _get_semaphore() -> asyncio.Semaphore:
         concurrency = getattr(settings, "llm_concurrency", 2)
         _semaphore_map[loop_id] = asyncio.Semaphore(concurrency)
     return _semaphore_map[loop_id]
+
+
+def _validate_price(price: float, currency: str = "RUB") -> bool:
+    """
+    Проверяет что цена не является случайной склейкой модели+памяти.
+
+    Примеры ошибочных цен от LLM:
+      16256  = iPhone 16 + 256GB (НЕ цена!)
+      16128  = iPhone 16 + 128GB (НЕ цена!)
+      15512  = iPhone 15 + 512GB (НЕ цена!)
+      14256  = iPhone 14 + 256GB (НЕ цена!)
+      13128  = iPhone 13 + 128GB (НЕ цена!)
+    """
+    price_int = int(price)
+    price_str = str(price_int)
+
+    # Проверяем паттерн: {модель}{память} — все комбинации iPhone 11-17 × storage
+    for model in _IPHONE_MODELS:
+        for storage in _STORAGE_VALUES:
+            concat = f"{model}{storage}"
+            if price_str == concat:
+                logger.warning(
+                    f"Price validation FAILED: {price_int} looks like iPhone {model} + {storage}GB concatenation — rejecting"
+                )
+                return False
+
+    # Общий диапазон для RUB
+    if currency.upper() == "RUB":
+        if price < _PRICE_MIN_RUB:
+            logger.warning(f"Price validation FAILED: {price_int} RUB is below minimum {_PRICE_MIN_RUB} RUB — rejecting")
+            return False
+        if price > _PRICE_MAX_RUB:
+            logger.warning(f"Price validation FAILED: {price_int} RUB exceeds maximum {_PRICE_MAX_RUB} RUB — rejecting")
+            return False
+
+    return True
 
 
 async def _call_model(client: httpx.AsyncClient, model: str, text: str) -> list[ParsedOffer]:
@@ -235,8 +287,19 @@ def _extract_json(content: str) -> str:
 def _dict_to_parsed_offer(data: dict) -> Optional[ParsedOffer]:
     try:
         price = data.get("price")
+        currency = data.get("currency", "RUB") or "RUB"
+
         if price is not None:
             price = float(price)
+            # Валидация: отклоняем цены которые выглядят как склейка модели+памяти
+            # (напр. LLM возвращает 16256 вместо реальной цены для iPhone 16 256GB)
+            if not _validate_price(price, currency):
+                logger.warning(
+                    f"Skipping offer with invalid price {price} {currency}: "
+                    f"model={data.get('model')!r}, memory={data.get('memory')!r}"
+                )
+                return None
+
         confidence = float(data.get("confidence", 0.6))
         if data.get("needs_review", False):
             confidence = min(confidence, 0.4)
@@ -250,7 +313,7 @@ def _dict_to_parsed_offer(data: dict) -> Optional[ParsedOffer]:
             condition=data.get("condition", "new"),
             sim_type=data.get("sim_type"),
             price=price,
-            currency=data.get("currency", "RUB"),
+            currency=currency,
             confidence=confidence,
             raw_line=str(data),
         )
