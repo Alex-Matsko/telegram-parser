@@ -202,10 +202,11 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "mac studio":         ("Mac", "Mac Studio",         "desktop"),
 
     # ===== APPLE: Apple TV =====
-    "apple tv 4k 2022":  ("Apple TV", "Apple TV 4K", "tv"),
-    "apple tv 4k 2021":  ("Apple TV", "Apple TV 4K", "tv"),
-    "apple tv 4k":       ("Apple TV", "Apple TV 4K", "tv"),
-    "apple tv":          ("Apple TV", "Apple TV",     "tv"),
+    "apple tv 4k 128gb":  ("Apple TV", "Apple TV 4K",   "tv"),
+    "apple tv 4k 2022":   ("Apple TV", "Apple TV 4K",   "tv"),
+    "apple tv 4k 2021":   ("Apple TV", "Apple TV 4K",   "tv"),
+    "apple tv 4k":        ("Apple TV", "Apple TV 4K",   "tv"),
+    "apple tv":           ("Apple TV", "Apple TV",      "tv"),
 
     # ===== SAMSUNG: Galaxy S26 =====
     "galaxy s26 ultra":  ("Galaxy", "Galaxy S26 Ultra", "smartphone"),
@@ -265,8 +266,12 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "z flip 5":          ("Galaxy", "Galaxy Z Flip 5",  "smartphone"),
 
     # ===== SAMSUNG: Galaxy A-series =====
+    "galaxy a57 5g":  ("Galaxy", "Galaxy A57 5G",  "smartphone"),
+    "galaxy a57":     ("Galaxy", "Galaxy A57",     "smartphone"),
     "galaxy a56 5g":  ("Galaxy", "Galaxy A56 5G",  "smartphone"),
     "galaxy a56":     ("Galaxy", "Galaxy A56",     "smartphone"),
+    "galaxy a37 5g":  ("Galaxy", "Galaxy A37 5G",  "smartphone"),
+    "galaxy a37":     ("Galaxy", "Galaxy A37",     "smartphone"),
     "galaxy a36 5g":  ("Galaxy", "Galaxy A36 5G",  "smartphone"),
     "galaxy a36":     ("Galaxy", "Galaxy A36",     "smartphone"),
     "galaxy a26 5g":  ("Galaxy", "Galaxy A26 5G",  "smartphone"),
@@ -276,6 +281,8 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "galaxy a16":     ("Galaxy", "Galaxy A16",     "smartphone"),
     "galaxy a15 5g":  ("Galaxy", "Galaxy A15 5G",  "smartphone"),
     "galaxy a15":     ("Galaxy", "Galaxy A15",     "smartphone"),
+    "galaxy a07":     ("Galaxy", "Galaxy A07",     "smartphone"),
+    "galaxy a07 4g":  ("Galaxy", "Galaxy A07",     "smartphone"),
     "galaxy a55 5g":  ("Galaxy", "Galaxy A55 5G",  "smartphone"),
     "galaxy a55":     ("Galaxy", "Galaxy A55",     "smartphone"),
     "galaxy a35 5g":  ("Galaxy", "Galaxy A35 5G",  "smartphone"),
@@ -299,7 +306,9 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "tab s9":               ("Galaxy Tab", "Galaxy Tab S9",        "tablet"),
 
     # ===== SAMSUNG: Accessories =====
+    "samsung power adapter 25w usb-c ep-t2510": ("Samsung Accessory", "Samsung 25W Adapter EP-T2510", "accessory"),
     "samsung power adapter 25w": ("Samsung Accessory", "Samsung 25W Adapter", "accessory"),
+    "ep-t2510":                  ("Samsung Accessory", "Samsung 25W Adapter EP-T2510", "accessory"),
 
     # ===== XIAOMI: Xiaomi 15 =====
     "xiaomi 15 ultra":   ("Xiaomi", "Xiaomi 15 Ultra",  "smartphone"),
@@ -359,6 +368,10 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "poco m6 pro":   ("POCO", "POCO M6 Pro",  "smartphone"),
 
     # ===== HUAWEI =====
+    "huawei mate xt ultimate design grl-lx9": ("Huawei Mate", "Huawei Mate XT Ultimate Design", "smartphone"),
+    "huawei mate xt ultimate design":          ("Huawei Mate", "Huawei Mate XT Ultimate Design", "smartphone"),
+    "huawei mate xt ultimate":                 ("Huawei Mate", "Huawei Mate XT Ultimate Design", "smartphone"),
+    "huawei mate xt":                          ("Huawei Mate", "Huawei Mate XT",                 "smartphone"),
     "huawei mate x7":        ("Huawei Mate", "Huawei Mate X7",        "smartphone"),
     "huawei mate x6":        ("Huawei Mate", "Huawei Mate X6",        "smartphone"),
     "huawei mate x5":        ("Huawei Mate", "Huawei Mate X5",        "smartphone"),
@@ -376,6 +389,8 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "huawei pura 70 pro+":   ("Huawei Pura", "Huawei Pura 70 Pro+",   "smartphone"),
     "huawei pura 70 pro":    ("Huawei Pura", "Huawei Pura 70 Pro",    "smartphone"),
     "huawei pura 70":        ("Huawei Pura", "Huawei Pura 70",        "smartphone"),
+    "huawei nova y73":       ("Huawei Nova", "Huawei Nova Y73",       "smartphone"),
+    "nova y73":              ("Huawei Nova", "Huawei Nova Y73",       "smartphone"),
     "huawei nova 12 pro":    ("Huawei Nova", "Huawei Nova 12 Pro",    "smartphone"),
     "huawei nova 12":        ("Huawei Nova", "Huawei Nova 12",        "smartphone"),
 
@@ -456,13 +471,30 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "canon eos r6":        ("Canon", "Canon EOS R6",        "camera"),
 
     # ===== INSTA360 =====
-    "insta360 x5":      ("Insta360", "Insta360 X5",     "camera"),
-    "insta360 x4":      ("Insta360", "Insta360 X4",     "camera"),
-    "insta360 x3":      ("Insta360", "Insta360 X3",     "camera"),
-    "insta360 ace pro": ("Insta360", "Insta360 Ace Pro","camera"),
-    "insta360 ace":     ("Insta360", "Insta360 Ace",    "camera"),
-    "insta360 go 3":    ("Insta360", "Insta360 Go 3",   "camera"),
-    "insta360":         ("Insta360", "Insta360",        "camera"),
+    "insta360 x5 8k 360 essentials bundle": ("Insta360", "Insta360 X5",         "camera"),
+    "insta 360 x5 - 8k 360 essentials bundle": ("Insta360", "Insta360 X5",      "camera"),
+    "insta360 x5 essentials bundle":         ("Insta360", "Insta360 X5",         "camera"),
+    "insta 360 x5 - 8k 360":                 ("Insta360", "Insta360 X5",         "camera"),
+    "insta360 x5":                           ("Insta360", "Insta360 X5",         "camera"),
+    "insta 360 x5":                          ("Insta360", "Insta360 X5",         "camera"),
+    "insta360 x4":                           ("Insta360", "Insta360 X4",         "camera"),
+    "insta 360 x4":                          ("Insta360", "Insta360 X4",         "camera"),
+    "insta360 x3":                           ("Insta360", "Insta360 X3",         "camera"),
+    "insta360 ace pro 2":                    ("Insta360", "Insta360 Ace Pro 2",  "camera"),
+    "insta360 acepro2":                      ("Insta360", "Insta360 Ace Pro 2",  "camera"),
+    "insta360 ace pro":                      ("Insta360", "Insta360 Ace Pro",    "camera"),
+    "insta360 acepro":                       ("Insta360", "Insta360 Ace Pro",    "camera"),
+    "insta360 ace":                          ("Insta360", "Insta360 Ace",        "camera"),
+    "insta 360 go 3s 4k midnight black":     ("Insta360", "Insta360 Go 3S",      "camera"),
+    "insta 360 go 3s 4k black":              ("Insta360", "Insta360 Go 3S",      "camera"),
+    "insta 360 go 3s 4k white":              ("Insta360", "Insta360 Go 3S",      "camera"),
+    "insta 360 go 3s 4k":                    ("Insta360", "Insta360 Go 3S",      "camera"),
+    "insta360 go 3s":                        ("Insta360", "Insta360 Go 3S",      "camera"),
+    "insta 360 go 3s":                       ("Insta360", "Insta360 Go 3S",      "camera"),
+    "insta360 go 3":                         ("Insta360", "Insta360 Go 3",       "camera"),
+    "insta 360 go 3":                        ("Insta360", "Insta360 Go 3",       "camera"),
+    "insta360":                              ("Insta360", "Insta360",            "camera"),
+    "insta 360":                             ("Insta360", "Insta360",            "camera"),
 
     # ===== DYSON =====
     "dyson ht-01 airstrait": ("Dyson", "Dyson Airstrait HT-01", "appliance"),
@@ -476,10 +508,11 @@ MODEL_ALIASES: dict[str, tuple[str, str, str]] = {
     "dyson":                 ("Dyson", "Dyson",                "appliance"),
 
     # ===== DELL =====
-    "dell pro max": ("Dell", "Dell Pro Max", "laptop"),
-    "dell xps 15":  ("Dell", "Dell XPS 15",  "laptop"),
-    "dell xps 13":  ("Dell", "Dell XPS 13",  "laptop"),
-    "dell xps":     ("Dell", "Dell XPS",     "laptop"),
+    "dell pro max gb10 grace superchip": ("Dell", "Dell Pro Max GB10", "laptop"),
+    "dell pro max":                      ("Dell", "Dell Pro Max",      "laptop"),
+    "dell xps 15":                       ("Dell", "Dell XPS 15",       "laptop"),
+    "dell xps 13":                       ("Dell", "Dell XPS 13",       "laptop"),
+    "dell xps":                          ("Dell", "Dell XPS",          "laptop"),
 }
 
 # --------------------------------------------------------------------------
@@ -533,6 +566,8 @@ COLOR_ALIASES: dict[str, str] = {
     "black": "Black",
     "blk": "Black",
     "bk": "Black",
+    "midnight black": "Midnight Black",
+    "midnightblack": "Midnight Black",
     "graphite": "Graphite",
     "graphite gray": "Graphite Gray",
     "jetblack": "Jet Black",
@@ -556,6 +591,8 @@ COLOR_ALIASES: dict[str, str] = {
     "light blue": "Light Blue",
     "iced blue": "Iced Blue",
     "icedblue": "Iced Blue",
+    "icy blue": "Icy Blue",
+    "icyblue": "Icy Blue",
     "neon blue": "Neon Blue",
     "red": "Red",
     "nebula red": "Nebula Red",
@@ -589,6 +626,8 @@ COLOR_ALIASES: dict[str, str] = {
     "silvershadow": "Silver Shadow",
     "lightgray": "Light Gray",
     "light gray": "Light Gray",
+    "graygreen": "Gray Green",
+    "gray green": "Gray Green",
     "gold": "Gold",
     "space black": "Space Black",
     "space gray": "Space Gray",
@@ -613,6 +652,11 @@ COLOR_ALIASES: dict[str, str] = {
     "phantomblack": "Phantom Black",
     "phantom white": "Phantom White",
     "phantomwhite": "Phantom White",
+    "charcoal": "Charcoal",
+    "olive": "Olive",
+    "lilac": "Lilac",
+    "ice blue": "Ice Blue",
+    "navy blue": "Navy Blue",
 }
 
 # --------------------------------------------------------------------------
@@ -649,14 +693,32 @@ CONDITION_ALIASES: dict[str, str] = {
 # SIM TYPE ALIASES
 # --------------------------------------------------------------------------
 SIM_TYPE_ALIASES: dict[str, str] = {
-    "sim+esim": "dual+esim",  "sim/esim": "dual+esim",  "+esim": "dual+esim",
-    "esim+sim": "dual+esim",
-    "1sim+esim": "dual+esim", "1 sim+esim": "dual+esim",
-    "esim": "esim", "e-sim": "esim",
-    "1sim": "single", "1 sim": "single",
-    "dual": "dual", "dual sim": "dual", "2sim": "dual", "2 sim": "dual",
-    "nano": "dual", "physical": "dual", "phy": "dual",
-    "фыз": "dual", "физ": "dual",
+    # dual+esim variants — most specific first
+    "1sim+esim":    "dual+esim",
+    "1 sim+esim":   "dual+esim",
+    "(1sim+esim)":  "dual+esim",
+    "(1 sim+esim)": "dual+esim",
+    "sim+esim":     "dual+esim",
+    "sim/esim":     "dual+esim",
+    "+esim":        "dual+esim",
+    "esim+sim":     "dual+esim",
+    # esim only
+    "(esim)":  "esim",
+    "esim":    "esim",
+    "e-sim":   "esim",
+    # single sim
+    "1sim":    "single",
+    "1 sim":   "single",
+    # dual physical
+    "dual":    "dual",
+    "dual sim": "dual",
+    "2sim":    "dual",
+    "2 sim":   "dual",
+    "nano":    "dual",
+    "physical": "dual",
+    "phy":     "dual",
+    "фыз": "dual",
+    "физ": "dual",
 }
 
 # --------------------------------------------------------------------------
