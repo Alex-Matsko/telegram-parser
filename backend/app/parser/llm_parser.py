@@ -33,8 +33,9 @@ _FALLBACK_STATUS_CODES = {400, 429, 404, 503, 502}
 
 _LLM_TIMEOUT = httpx.Timeout(connect=5.0, read=180.0, write=10.0, pool=5.0)
 
-# qwen2.5:7b-instruct-ctx8k имеет 8k контекст — даём максимум для ответа
-_MAX_TOKENS = 8192
+# Реальный максимум: 30 позиций × ~50 токенов = ~1500. 8192 было причиной
+# того что модель генерировала тысячи токенов и обрезала JSON на полуслове.
+_MAX_TOKENS = 1500
 
 SYSTEM_PROMPT = """Ты — модуль нормализации прайсов электроники из Telegram-сообщений.
 
@@ -44,7 +45,7 @@ SYSTEM_PROMPT = """Ты — модуль нормализации прайсов
 3. Для каждой позиции извлечь:
    - category, brand, line, model, memory, color, condition, sim_type, price, currency
 4. Привести данные к нормализованному виду.
-5. Вернуть результат строго в JSON.
+5. Вернуть результат строго в JSON без markdown-обёрток (без ```json).
 6. Если уверенность < 0.7, установить "needs_review": true.
 7. Не додумывать данные, если их нет явно.
 8. Если несколько позиций — вернуть массив объектов в поле "items".
@@ -94,7 +95,7 @@ SYSTEM_PROMPT = """Ты — модуль нормализации прайсов
 
 8. МОДЕЛЬ vs ПАМЯТЬ: "16 256 Black-62700"→model="iPhone 16",memory="256GB" (не model=16256!)
 
-== ОТВЕЧАЙ ТОЛЬКО ВАЛИДНЫМ JSON БЕЗ ПОЯСНЕНИЙ ==
+== ОТВЕЧАЙ ТОЛЬКО ВАЛИДНЫМ JSON БЕЗ ПОЯСНЕНИЙ И БЕЗ ```json ОБЁРТКИ ==
 Шаблон: {"items":[{"category":"smartphone","brand":"Apple","line":"iPhone","model":"iPhone 17 Pro","memory":"256GB","color":null,"condition":"new","sim_type":null,"price":96500,"currency":"RUB","confidence":0.9,"needs_review":false}]}
 """
 
