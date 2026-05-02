@@ -41,6 +41,19 @@ logger = logging.getLogger(__name__)
 
 _PRICE_MIN = 1000
 
+# All iPhone/Samsung model numbers that could concatenate with storage
+_PHONE_MODEL_NUMBERS = {str(n) for n in range(10, 30)}
+# All standard storage values
+_STORAGE_VALUES: frozenset[str] = frozenset({'32', '64', '128', '256', '512', '1024', '2048'})
+
+# Pre-computed set of all model+storage concatenations that are NEVER valid prices
+# e.g. "16256", "16128", "15512", "14256", "13128" etc.
+_MODEL_STORAGE_CONCAT: frozenset[str] = frozenset(
+    f"{model}{storage}"
+    for model in _PHONE_MODEL_NUMBERS
+    for storage in _STORAGE_VALUES
+)
+
 
 @dataclass
 class ParsedOffer:
@@ -193,9 +206,6 @@ _PRICE_SPACED = re.compile(
 _PRICE_TRAILING = re.compile(
     r'(?<!\d)(\d{5,6})\s*[`\*]?\s*$',
 )
-
-# Standard storage values (GB) — these numbers are NEVER prices
-_STORAGE_VALUES: frozenset[str] = frozenset({'32', '64', '128', '256', '512', '1024', '2048'})
 
 _MEMORY_PATTERN = re.compile(
     r'(?<![.\d])\b(32|64|128|256|512|1024)\s*(?:gb|\u0433\u0431)?\b(?!\s*(?:\$|\u20ac|\u20bd|usd|eur|rub|\u0440\u0443\u0431))'
@@ -420,6 +430,7 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
       2. RAM/storage slash format: X/Y -> both X and Y excluded
       3. RAM standalone: 8GB, 12GB, 16GB etc.
       4. Model generation numbers: "16" in "iPhone 16"
+      5. model+storage concatenations: 16256, 16128, 15512 etc.
 
     Price zone strategy:
       - Pipe-delimited row -> last pipe-segment with a price-like number
@@ -429,11 +440,13 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
     Anti-ambiguity guards:
       - _PRICE_SPACED is scoped to price_zone only
       - Spaced price candidate where first segment is a storage value is rejected
-        e.g. "256 627" in price_zone="256 62700" -> rejected because 256 \u2208 storage
+        e.g. "256 627" in price_zone="256 62700" -> rejected because 256 in storage
       - Spaced price result must be >= 10000 (prevents 1 000 ghost prices)
     """
     excluded: set[str] = set()
     excluded.update(_STORAGE_VALUES)
+    # Exclude all model+storage concatenations (16256, 16128, 15512, etc.)
+    excluded.update(_MODEL_STORAGE_CONCAT)
 
     for m in _MEMORY_PATTERN.finditer(text):
         excluded.add(re.sub(r'[^\d]', '', m.group(0)))
@@ -453,6 +466,10 @@ def _extract_price(text: str) -> tuple[Optional[float], str, Optional[tuple[int,
         if normalized in excluded:
             return None
         if normalized in _STORAGE_VALUES:
+            return None
+        # Hard block: reject model+storage concatenations like 16256, 16128, 15512
+        if normalized in _MODEL_STORAGE_CONCAT:
+            logger.debug(f"Rejected model+storage concat as price: {normalized}")
             return None
         try:
             val = float(normalized)

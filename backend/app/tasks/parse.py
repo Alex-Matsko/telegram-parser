@@ -13,6 +13,21 @@ PARSE_BATCH_SIZE = 50
 # Макс LLM-запросов за один запуск задачи (0 = без ограничений)
 LLM_MAX_PER_RUN = 50
 
+# Pre-computed set of model+storage concatenations that are NEVER valid prices
+# Acts as last-resort guard before writing to DB regardless of parser source
+_PHONE_MODEL_NUMBERS_TASK = {str(n) for n in range(10, 30)}
+_STORAGE_VALUES_TASK = {'32', '64', '128', '256', '512', '1024', '2048'}
+_MODEL_STORAGE_CONCAT_TASK: frozenset[str] = frozenset(
+    f"{model}{storage}"
+    for model in _PHONE_MODEL_NUMBERS_TASK
+    for storage in _STORAGE_VALUES_TASK
+)
+
+
+def _is_concat_price(price: float) -> bool:
+    """Return True if price looks like a model+storage concatenation (e.g. 16256, 16128)."""
+    return str(int(price)) in _MODEL_STORAGE_CONCAT_TASK
+
 
 def _run_async(coro):
     loop = asyncio.new_event_loop()
@@ -259,6 +274,15 @@ async def _save_offers(
             continue
 
         if parsed_offer.price is None or parsed_offer.price <= 0:
+            any_needs_review = True
+            continue
+
+        # Last-resort guard: reject model+storage concatenation prices from ANY parser
+        if _is_concat_price(parsed_offer.price):
+            logger.warning(
+                f"DB guard: rejected concat price {parsed_offer.price} "
+                f"for {parsed_offer.model} {parsed_offer.memory} — skipping offer"
+            )
             any_needs_review = True
             continue
 
