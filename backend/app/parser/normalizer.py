@@ -122,9 +122,27 @@ async def normalize_and_match(
             condition=offer.condition,
             sim_type=offer.sim_type,
         )
+
+        # Валидация brand перед INSERT — колонка NOT NULL в product_catalog.
+        # Если LLM вернул brand=None (например для категории 'component'),
+        # используем model как fallback, иначе возвращаем None чтобы не крашить сессию.
+        resolved_brand = offer.brand
+        if not resolved_brand:
+            if offer.category == "component" and offer.model:
+                resolved_brand = offer.model
+                logger.warning(
+                    f"Brand is None for component '{offer.model}', using model as brand fallback"
+                )
+            else:
+                logger.warning(
+                    f"Skipping product creation: brand is None for "
+                    f"category='{offer.category}' model='{offer.model}'"
+                )
+                return None, offer.confidence
+
         new_product = ProductCatalog(
             category=offer.category or "unknown",
-            brand=offer.brand,
+            brand=resolved_brand,
             line=offer.line,
             model=offer.model,
             memory=offer.memory,
