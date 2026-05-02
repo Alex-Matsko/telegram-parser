@@ -172,6 +172,9 @@ async def _parse_pending_messages_async() -> dict:
 
             offers = llm_results.get(msg.id) or regex_results.get(msg.id, [])
 
+            # Безопасно читаем id ДО любых операций с сессией
+            msg_id = msg.__dict__.get("id", "unknown")
+
             try:
                 status, skipped = await _save_offers(
                     session=session,
@@ -190,14 +193,38 @@ async def _parse_pending_messages_async() -> dict:
                 else:
                     stats["failed"] += 1
             except Exception as e:
-                logger.error(f"Error saving message {msg.id}: {e}")
-                msg.parse_status = "failed"
-                msg.parse_error = str(e)[:1000]
-                msg.is_processed = True
+                # ВАЖНО: безопасное логирование без обращения к ORM на сломанной сессии
+                logger.error(f"Error saving message {msg_id}: {e}")
+
+                # Откатываем сессию, чтобы она стала пригодной для следующих сообщений
+                try:
+                    await session.rollback()
+                except Exception as rollback_err:
+                    logger.warning(f"Rollback failed for msg {msg_id}: {rollback_err}")
+
+                # Помечаем сообщение как error через новую операцию после rollback
+                try:
+                    msg.parse_status = "error"
+                    msg.parse_error = str(e)[:1000]
+                    msg.is_processed = True
+                    await session.flush()
+                except Exception as mark_err:
+                    logger.warning(f"Could not mark message {msg_id} as error: {mark_err}")
+                    try:
+                        await session.rollback()
+                    except Exception:
+                        pass
+
                 stats["processed"] += 1
                 stats["failed"] += 1
+                # continue — переходим к следующему сообщению, не рушим весь батч
+                continue
 
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception as commit_err:
+            logger.error(f"Final commit failed: {commit_err}")
+            await session.rollback()
 
     logger.info(f"Parsing complete: {stats}")
     return stats
